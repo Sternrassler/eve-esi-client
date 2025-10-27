@@ -14,8 +14,8 @@
 - 📈 **Observability**: Prometheus metrics (8 metrics), structured logging (Zerolog)
 - 🔌 **Flexible**: *(Phase 1)* Go library mode | *(Phase 2)* HTTP service mode
 
-**Phase 1 Status (Foundation)**: ✅ **Rate Limiter & Cache Manager COMPLETED**  
-**Next**: ESI Client Core Integration (Issue #3)
+**Phase 1 Status (Foundation)**: ✅ **Rate Limiter, Cache Manager & ESI Client Core COMPLETED**  
+**Next**: Pagination Support (Issue #4) and Service Mode (Phase 2)
 
 ## Architecture
 
@@ -48,9 +48,55 @@
 
 ## Quick Start
 
-> **Note**: Full client integration is coming in Issue #3. Currently available: Rate Limiter and Cache Manager as standalone packages.
+### Integrated Client (Available Now)
 
-### Current Usage (Phase 1 - Foundation Components)
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "log"
+    
+    "github.com/Sternrassler/eve-esi-client/pkg/client"
+    "github.com/redis/go-redis/v9"
+)
+
+func main() {
+    // Create Redis client
+    redisClient := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+    })
+    defer redisClient.Close()
+    
+    // Create ESI client with default configuration
+    cfg := client.DefaultConfig(redisClient, "MyApp/1.0.0 (contact@example.com)")
+    esiClient, err := client.New(cfg)
+    if err != nil {
+        log.Fatalf("Failed to create ESI client: %v", err)
+    }
+    defer esiClient.Close()
+    
+    // Make a request (automatic rate limiting + caching)
+    ctx := context.Background()
+    resp, err := esiClient.Get(ctx, "/v1/status/")
+    if err != nil {
+        log.Fatalf("Request failed: %v", err)
+    }
+    defer resp.Body.Close()
+    
+    // Read response
+    body, _ := io.ReadAll(resp.Body)
+    fmt.Printf("ESI Status: %s\n", body)
+}
+```
+
+See [docs/CLIENT_USAGE.md](docs/CLIENT_USAGE.md) for complete usage examples and best practices.
+
+### Foundation Components (Also Available Separately)
+
+You can also use the Rate Limiter and Cache Manager as standalone components if needed.
 
 #### Rate Limit Tracker
 
@@ -139,47 +185,12 @@ func main() {
 }
 ```
 
-See [examples/cache-usage/](examples/cache-usage/) for complete examples.
+See [examples/cache-usage/](examples/cache-usage/) for complete standalone examples.
 
-### Planned Usage (Phase 2 - Integrated Client)
-
-```go
-// Coming in Issue #3 - ESI Client Core Integration
-package main
-
-import (
-    "context"
-    "github.com/Sternrassler/eve-esi-client/pkg/client"
-    "github.com/redis/go-redis/v9"
-)
-
-func main() {
-    // Setup Redis
-    redisClient := redis.NewClient(&redis.Options{
-        Addr: "localhost:6379",
-    })
-    
-    // Create ESI client (COMING SOON - Issue #3)
-    esiClient := client.New(client.Config{
-        Redis:           redisClient,
-        UserAgent:       "MyApp/1.0 (contact@example.com)",
-    })
-    
-    // Fetch market orders (automatic rate limiting + caching)
-    resp, err := esiClient.Get(context.Background(), "/v1/markets/10000002/orders/")
-    if err != nil {
-        panic(err)
-    }
-    
-    defer resp.Body.Close()
-    // Process response...
-}
-```
-
-### Service Mode (HTTP Proxy) - Coming in Phase 3
+### Service Mode (HTTP Proxy) - Coming in Phase 2
 
 ```bash
-# Coming in future phase
+# Coming in Phase 2
 # docker run -p 8080:8080 \
 #     -e REDIS_URL=redis:6379 \
 #     ghcr.io/sternrassler/eve-esi-client:latest
@@ -187,15 +198,15 @@ func main() {
 
 ## Installation
 
-### As Library (Foundation Components Available Now)
+### As Library (Complete Client Available Now)
 
 ```bash
-# Install rate limiter and cache manager
+# Install full ESI client with integrated components
+go get github.com/Sternrassler/eve-esi-client/pkg/client
+
+# Or install individual components
 go get github.com/Sternrassler/eve-esi-client/pkg/ratelimit
 go get github.com/Sternrassler/eve-esi-client/pkg/cache
-
-# Full client coming in Issue #3
-# go get github.com/Sternrassler/eve-esi-client/pkg/client
 ```
 
 ### As Service (Docker)
