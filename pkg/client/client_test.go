@@ -417,7 +417,9 @@ func TestDo_ErrorClassification(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			callCount := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				callCount++
 				w.Header().Set("X-ESI-Error-Limit-Remain", "100")
 				w.Header().Set("X-ESI-Error-Limit-Reset", "60")
 				w.WriteHeader(tt.statusCode)
@@ -432,15 +434,41 @@ func TestDo_ErrorClassification(t *testing.T) {
 
 			req, _ := http.NewRequest("GET", server.URL+"/test", nil)
 			resp, err := client.Do(req)
-			if err != nil {
-				t.Fatalf("Request failed: %v", err)
-			}
-			resp.Body.Close()
 
-			// Verify the error was classified correctly
-			errClass := client.classifyError(resp, nil)
-			if errClass != tt.expected {
-				t.Errorf("Error class = %q, want %q", errClass, tt.expected)
+			// For client errors, expect no error but check response status
+			if tt.expected == ErrorClassClient {
+				if err != nil {
+					t.Fatalf("Expected no error for client error, got %v", err)
+				}
+				if resp == nil {
+					t.Fatal("Expected response for client error, got nil")
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != tt.statusCode {
+					t.Errorf("Expected status %d, got %d", tt.statusCode, resp.StatusCode)
+				}
+				if callCount != 1 {
+					t.Errorf("Expected 1 call for client error, got %d", callCount)
+				}
+				return
+			}
+
+			// For server/rate limit errors, expect retries and eventual failure
+			if err == nil {
+				t.Fatal("Expected error after retry exhaustion, got nil")
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+
+			// Verify retries were attempted (should be max 3 attempts)
+			if callCount != 3 {
+				t.Errorf("Expected 3 retry attempts, got %d", callCount)
+			}
+
+			// Verify the error contains retry exhausted
+			if !errors.Is(err, ErrRetryExhausted) {
+				t.Errorf("Expected ErrRetryExhausted, got %v", err)
 			}
 		})
 	}

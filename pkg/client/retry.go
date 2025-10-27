@@ -6,29 +6,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/rs/zerolog/log"
 )
 
 // Prometheus metrics for retry operations.
-var (
-	esiRetriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_retries_total",
-		Help: "Total number of retry attempts by error class",
-	}, []string{"error_class"})
-
-	esiRetryBackoffSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "esi_retry_backoff_seconds",
-		Help:    "Backoff duration for retries by error class",
-		Buckets: []float64{0.5, 1, 2, 5, 10, 30, 60},
-	}, []string{"error_class"})
-
-	esiRetryExhaustedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_retry_exhausted_total",
-		Help: "Total number of times retry attempts were exhausted by error class",
-	}, []string{"error_class"})
-)
+// ...existing code...
 
 // RetryConfig holds the configuration for retry logic.
 type RetryConfig struct {
@@ -89,13 +71,14 @@ func RetryConfigForErrorClass(errorClass ErrorClass) RetryConfig {
 
 // retryWithBackoff executes a function with exponential backoff retry logic.
 // It respects context cancellation and adds jitter to prevent thundering herd.
-func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() error) error {
-	config := RetryConfigForErrorClass(errorClass)
-
+// The classifyFn callback is called after each error to determine the error class dynamically.
+func retryWithBackoff(ctx context.Context, fn func() error, classifyFn func(error) ErrorClass) error {
 	var lastErr error
-	backoff := config.InitialBackoff
+	var currentClass ErrorClass
+	var config RetryConfig
+	var backoff time.Duration
 
-	for attempt := 1; attempt <= config.MaxAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		// Execute the function
 		err := fn()
 		if err == nil {
@@ -103,7 +86,7 @@ func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() erro
 			if attempt > 1 {
 				// Log successful retry
 				log.Info().
-					Str("error_class", string(errorClass)).
+					Str("error_class", string(currentClass)).
 					Int("attempt", attempt).
 					Msg("Request succeeded after retry")
 			}
@@ -112,8 +95,12 @@ func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() erro
 
 		lastErr = err
 
+		// Classify the error to get appropriate retry config
+		currentClass = classifyFn(err)
+		config = RetryConfigForErrorClass(currentClass)
+
 		// Check if we should retry this error
-		if !shouldRetry(errorClass) {
+		if !shouldRetry(currentClass) {
 			// Don't retry client errors - return immediately
 			return lastErr
 		}
@@ -123,15 +110,20 @@ func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() erro
 			break
 		}
 
+		// Initialize backoff on first retry
+		if attempt == 1 {
+			backoff = config.InitialBackoff
+		}
+
 		// Record retry metrics
-		esiRetriesTotal.WithLabelValues(string(errorClass)).Inc()
+		esiRetriesTotal.WithLabelValues(string(currentClass)).Inc()
 
 		// Add jitter (±20% randomness)
 		jitter := time.Duration(float64(backoff) * (0.8 + rand.Float64()*0.4))
-		esiRetryBackoffSeconds.WithLabelValues(string(errorClass)).Observe(jitter.Seconds())
+		esiRetryBackoffSeconds.WithLabelValues(string(currentClass)).Observe(jitter.Seconds())
 
 		log.Debug().
-			Str("error_class", string(errorClass)).
+			Str("error_class", string(currentClass)).
 			Int("attempt", attempt).
 			Dur("backoff", jitter).
 			Msg("Retrying request after backoff")
@@ -140,7 +132,7 @@ func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() erro
 		select {
 		case <-ctx.Done():
 			log.Warn().
-				Str("error_class", string(errorClass)).
+				Str("error_class", string(currentClass)).
 				Int("attempt", attempt).
 				Msg("Context cancelled during retry backoff")
 			return fmt.Errorf("%w: %v", ErrContextCancelled, ctx.Err())
@@ -156,9 +148,9 @@ func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() erro
 	}
 
 	// All retries exhausted
-	esiRetryExhaustedTotal.WithLabelValues(string(errorClass)).Inc()
+	esiRetryExhaustedTotal.WithLabelValues(string(currentClass)).Inc()
 	log.Warn().
-		Str("error_class", string(errorClass)).
+		Str("error_class", string(currentClass)).
 		Int("max_attempts", config.MaxAttempts).
 		Msg("Retry attempts exhausted")
 

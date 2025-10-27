@@ -40,15 +40,15 @@ var (
 		Help: "Total number of retry attempts by error class",
 	}, []string{"error_class"})
 
-	esiRetryBackoff = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	esiRetryBackoffSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "esi_retry_backoff_seconds",
 		Help:    "Backoff duration for retries by error class",
-		Buckets: []float64{0.5, 1, 2, 5, 10, 30},
+		Buckets: []float64{0.5, 1, 2, 5, 10, 30, 60},
 	}, []string{"error_class"})
 
-	esiRetryExhausted = promauto.NewCounterVec(prometheus.CounterOpts{
+	esiRetryExhaustedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "esi_retry_exhausted_total",
-		Help: "Total number of requests that exhausted max retry attempts",
+		Help: "Total number of times retry attempts were exhausted by error class",
 	}, []string{"error_class"})
 )
 
@@ -220,7 +220,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	var errClass ErrorClass
 
 	// Wrap the HTTP request in retry logic
-	retryErr := retryWithBackoff(ctx, ErrorClassNetwork, func() error {
+	retryErr := retryWithBackoff(ctx, func() error {
 		// Execute the HTTP request
 		var reqErr error
 		resp, reqErr = c.httpClient.Do(req)
@@ -259,6 +259,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 			// Check if we should retry this error
 			if shouldRetry(errClass) {
+				// Build error for retriable errors (server, rate_limit, network)
 				lastErr = &ESIError{
 					StatusCode: resp.StatusCode,
 					ErrorClass: errClass,
@@ -268,13 +269,16 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 				return lastErr
 			}
 
-			// Don't retry client errors
+			// Don't retry client errors - return success (let caller handle status)
 			return nil
 		}
 
 		// Success
 		esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
 		return nil
+	}, func(err error) ErrorClass {
+		// Classify error dynamically for retry logic
+		return errClass
 	})
 
 	// Handle retry exhaustion
