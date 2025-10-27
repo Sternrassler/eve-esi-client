@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/client"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -39,11 +40,18 @@ func main() {
 
 	// HTTP Server
 	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("/ready", readyHandler(redisClient, esiClient))
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/esi/", esiProxyHandler(esiClient))
 
 	addr := ":" + port
 	log.Printf("Starting ESI proxy server on %s", addr)
 	log.Printf("User-Agent: %s", userAgent)
+	log.Printf("Endpoints:")
+	log.Printf("  - Health:  http://localhost%s/health", addr)
+	log.Printf("  - Ready:   http://localhost%s/ready", addr)
+	log.Printf("  - Metrics: http://localhost%s/metrics", addr)
+	log.Printf("  - Proxy:   http://localhost%s/esi/...", addr)
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
@@ -53,6 +61,24 @@ func main() {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "OK")
+}
+
+func readyHandler(redisClient *redis.Client, esiClient *client.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		// Check Redis connection
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, "Redis unavailable: %v", err)
+			return
+		}
+
+		// All checks passed
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "OK")
+	}
 }
 
 func esiProxyHandler(esiClient *client.Client) http.HandlerFunc {

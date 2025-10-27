@@ -174,7 +174,7 @@ func handleESIResponse(resp *http.Response, manager *cache.Manager, key cache.Ca
 
 		// Note: In production, metrics would be incremented by the Manager internally.
 		// This is shown here for demonstration purposes.
-		cache.ConditionalRequests.Inc()
+		cache.NotModifiedResponses.Inc()
 
 		// Update TTL from new expires header
 		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {
