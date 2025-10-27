@@ -537,13 +537,13 @@ func TestDo_RetryOnServerError(t *testing.T) {
 		attemptCount++
 		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
-		
+
 		if attemptCount < 3 {
 			// Fail with 500 for first two attempts
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		
+
 		// Succeed on third attempt
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
@@ -593,7 +593,7 @@ func TestDo_NoRetryOnClientError(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
 	resp, err := client.Do(req)
-	
+
 	// Should not error out, but return the 404 response
 	if err != nil {
 		t.Fatalf("Do() failed: %v", err)
@@ -618,13 +618,13 @@ func TestDo_RetryOnRateLimit(t *testing.T) {
 		attemptCount++
 		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
-		
+
 		if attemptCount == 1 {
 			// Return 520 rate limit error
 			w.WriteHeader(520)
 			return
 		}
-		
+
 		// Succeed on second attempt
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
@@ -639,11 +639,11 @@ func TestDo_RetryOnRateLimit(t *testing.T) {
 	}
 
 	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
-	
+
 	start := time.Now()
 	resp, err := client.Do(req)
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		t.Fatalf("Do() failed: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestDo_RetryOnRateLimit(t *testing.T) {
 	if attemptCount != 2 {
 		t.Errorf("Expected 2 attempts (1 retry), got %d", attemptCount)
 	}
-	
+
 	// Rate limit retry should have waited (initial backoff is 5s, with jitter it's 4-6s)
 	if duration < 3*time.Second {
 		t.Errorf("Expected at least 3s delay for rate limit retry, got %v", duration)
@@ -683,7 +683,7 @@ func TestDo_RetryExhausted(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
 	_, err = client.Do(req)
-	
+
 	// Should fail with retry exhausted error
 	if err == nil {
 		t.Error("Expected error, got nil")

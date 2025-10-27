@@ -91,7 +91,7 @@ func RetryConfigForErrorClass(errorClass ErrorClass) RetryConfig {
 // It respects context cancellation and adds jitter to prevent thundering herd.
 func retryWithBackoff(ctx context.Context, errorClass ErrorClass, fn func() error) error {
 	config := RetryConfigForErrorClass(errorClass)
-	
+
 	var lastErr error
 	backoff := config.InitialBackoff
 

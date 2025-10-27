@@ -26,38 +26,38 @@ func TestDefaultRetryConfig(t *testing.T) {
 
 func TestRetryConfigForErrorClass(t *testing.T) {
 	tests := []struct {
-		name            string
-		errorClass      ErrorClass
-		expectedInitial time.Duration
-		expectedMax     time.Duration
+		name             string
+		errorClass       ErrorClass
+		expectedInitial  time.Duration
+		expectedMax      time.Duration
 		expectedAttempts int
 	}{
 		{
-			name:            "server error config",
-			errorClass:      ErrorClassServer,
-			expectedInitial: 1 * time.Second,
-			expectedMax:     10 * time.Second,
+			name:             "server error config",
+			errorClass:       ErrorClassServer,
+			expectedInitial:  1 * time.Second,
+			expectedMax:      10 * time.Second,
 			expectedAttempts: 3,
 		},
 		{
-			name:            "rate limit config",
-			errorClass:      ErrorClassRateLimit,
-			expectedInitial: 5 * time.Second,
-			expectedMax:     60 * time.Second,
+			name:             "rate limit config",
+			errorClass:       ErrorClassRateLimit,
+			expectedInitial:  5 * time.Second,
+			expectedMax:      60 * time.Second,
 			expectedAttempts: 3,
 		},
 		{
-			name:            "network error config",
-			errorClass:      ErrorClassNetwork,
-			expectedInitial: 2 * time.Second,
-			expectedMax:     30 * time.Second,
+			name:             "network error config",
+			errorClass:       ErrorClassNetwork,
+			expectedInitial:  2 * time.Second,
+			expectedMax:      30 * time.Second,
 			expectedAttempts: 3,
 		},
 		{
-			name:            "unknown error class uses default",
-			errorClass:      "",
-			expectedInitial: 1 * time.Second,
-			expectedMax:     30 * time.Second,
+			name:             "unknown error class uses default",
+			errorClass:       "",
+			expectedInitial:  1 * time.Second,
+			expectedMax:      30 * time.Second,
 			expectedAttempts: 3,
 		},
 	}
@@ -81,7 +81,7 @@ func TestRetryConfigForErrorClass(t *testing.T) {
 
 func TestRetryWithBackoff_Success(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Function succeeds immediately
 	callCount := 0
 	fn := func() error {
@@ -90,7 +90,7 @@ func TestRetryWithBackoff_Success(t *testing.T) {
 	}
 
 	err := retryWithBackoff(ctx, ErrorClassServer, fn)
-	
+
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRetryWithBackoff_Success(t *testing.T) {
 
 func TestRetryWithBackoff_SuccessAfterRetry(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Function fails twice, then succeeds
 	callCount := 0
 	fn := func() error {
@@ -115,14 +115,14 @@ func TestRetryWithBackoff_SuccessAfterRetry(t *testing.T) {
 	start := time.Now()
 	err := retryWithBackoff(ctx, ErrorClassServer, fn)
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 	if callCount != 3 {
 		t.Errorf("Expected 3 calls, got %d", callCount)
 	}
-	
+
 	// Should have waited for at least some backoff (with jitter, it's hard to be precise)
 	// First retry: ~1s, second retry: ~2s, total ~3s (with jitter it could be less)
 	if duration < 500*time.Millisecond {
@@ -132,7 +132,7 @@ func TestRetryWithBackoff_SuccessAfterRetry(t *testing.T) {
 
 func TestRetryWithBackoff_MaxAttemptsExhausted(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Function always fails
 	callCount := 0
 	testErr := errors.New("persistent error")
@@ -142,7 +142,7 @@ func TestRetryWithBackoff_MaxAttemptsExhausted(t *testing.T) {
 	}
 
 	err := retryWithBackoff(ctx, ErrorClassServer, fn)
-	
+
 	if err == nil {
 		t.Error("Expected error, got nil")
 	}
@@ -156,7 +156,7 @@ func TestRetryWithBackoff_MaxAttemptsExhausted(t *testing.T) {
 
 func TestRetryWithBackoff_ClientErrorNoRetry(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Client errors should not be retried
 	callCount := 0
 	testErr := errors.New("client error")
@@ -166,7 +166,7 @@ func TestRetryWithBackoff_ClientErrorNoRetry(t *testing.T) {
 	}
 
 	err := retryWithBackoff(ctx, ErrorClassClient, fn)
-	
+
 	if err == nil {
 		t.Error("Expected error, got nil")
 	}
@@ -185,7 +185,7 @@ func TestRetryWithBackoff_ClientErrorNoRetry(t *testing.T) {
 
 func TestRetryWithBackoff_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Function always fails
 	callCount := 0
 	fn := func() error {
@@ -198,7 +198,7 @@ func TestRetryWithBackoff_ContextCancelled(t *testing.T) {
 	}
 
 	err := retryWithBackoff(ctx, ErrorClassServer, fn)
-	
+
 	if err == nil {
 		t.Error("Expected error, got nil")
 	}
@@ -214,7 +214,7 @@ func TestRetryWithBackoff_ContextCancelled(t *testing.T) {
 func TestRetryWithBackoff_ContextCancelledImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
-	
+
 	// Function should not be called if context is already cancelled
 	callCount := 0
 	fn := func() error {
@@ -223,12 +223,12 @@ func TestRetryWithBackoff_ContextCancelledImmediately(t *testing.T) {
 	}
 
 	err := retryWithBackoff(ctx, ErrorClassServer, fn)
-	
+
 	// First attempt should still happen even if context is cancelled
 	if callCount < 1 {
 		t.Errorf("Expected at least 1 call, got %d", callCount)
 	}
-	
+
 	// But we should get a context cancelled error eventually
 	if err == nil {
 		t.Error("Expected error, got nil")
@@ -237,7 +237,7 @@ func TestRetryWithBackoff_ContextCancelledImmediately(t *testing.T) {
 
 func TestRetryWithBackoff_ExponentialBackoff(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Track timing of retries
 	timestamps := []time.Time{}
 	fn := func() error {
@@ -246,26 +246,26 @@ func TestRetryWithBackoff_ExponentialBackoff(t *testing.T) {
 	}
 
 	retryWithBackoff(ctx, ErrorClassServer, fn)
-	
+
 	if len(timestamps) != 3 {
 		t.Fatalf("Expected 3 timestamps, got %d", len(timestamps))
 	}
-	
+
 	// Check that delays increase exponentially (with jitter tolerance)
 	// First delay: ~1s, second delay: ~2s
 	firstDelay := timestamps[1].Sub(timestamps[0])
 	secondDelay := timestamps[2].Sub(timestamps[1])
-	
+
 	// With jitter (±20%), expect first delay roughly in range [0.8s, 1.2s]
 	if firstDelay < 500*time.Millisecond || firstDelay > 2*time.Second {
 		t.Errorf("First retry delay %v outside expected range", firstDelay)
 	}
-	
+
 	// Second delay should be roughly double (with jitter)
 	if secondDelay < 1*time.Second || secondDelay > 4*time.Second {
 		t.Errorf("Second retry delay %v outside expected range", secondDelay)
 	}
-	
+
 	// Second delay should generally be larger than first (may occasionally fail due to jitter)
 	if float64(secondDelay) < float64(firstDelay)*0.8 {
 		t.Logf("Warning: Second delay (%v) not significantly larger than first (%v) - may be jitter", secondDelay, firstDelay)
@@ -274,7 +274,7 @@ func TestRetryWithBackoff_ExponentialBackoff(t *testing.T) {
 
 func TestRetryWithBackoff_RateLimitLongerBackoff(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Track timing for rate limit errors (should have longer backoff)
 	timestamps := []time.Time{}
 	fn := func() error {
@@ -283,11 +283,11 @@ func TestRetryWithBackoff_RateLimitLongerBackoff(t *testing.T) {
 	}
 
 	retryWithBackoff(ctx, ErrorClassRateLimit, fn)
-	
+
 	if len(timestamps) != 3 {
 		t.Fatalf("Expected 3 timestamps, got %d", len(timestamps))
 	}
-	
+
 	// Rate limit config has InitialBackoff: 5s
 	// First delay should be around 5s (with jitter ±20%)
 	firstDelay := timestamps[1].Sub(timestamps[0])
@@ -298,10 +298,10 @@ func TestRetryWithBackoff_RateLimitLongerBackoff(t *testing.T) {
 
 func TestRetryWithBackoff_Jitter(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Run multiple retries and verify jitter is applied
 	delays := []time.Duration{}
-	
+
 	for i := 0; i < 5; i++ {
 		timestamps := []time.Time{}
 		fn := func() error {
@@ -313,12 +313,12 @@ func TestRetryWithBackoff_Jitter(t *testing.T) {
 		}
 
 		retryWithBackoff(ctx, ErrorClassServer, fn)
-		
+
 		if len(timestamps) >= 2 {
 			delays = append(delays, timestamps[1].Sub(timestamps[0]))
 		}
 	}
-	
+
 	// With jitter, we should see some variation in delays
 	// All delays should be in the range of InitialBackoff ±20%
 	allSame := true
@@ -331,7 +331,7 @@ func TestRetryWithBackoff_Jitter(t *testing.T) {
 			allSame = false
 		}
 	}
-	
+
 	// It's unlikely (though possible) all delays are exactly the same with jitter
 	if allSame {
 		t.Logf("Warning: All delays were the same - jitter may not be working (or very unlucky)")
@@ -345,9 +345,9 @@ func TestRetryWithBackoff_MaxBackoffCap(t *testing.T) {
 		MaxAttempts:       5,
 		InitialBackoff:    1 * time.Second,
 		MaxBackoff:        3 * time.Second, // Low cap for testing
-		BackoffMultiplier: 10.0, // High multiplier
+		BackoffMultiplier: 10.0,            // High multiplier
 	}
-	
+
 	backoff := config.InitialBackoff
 	for i := 0; i < 3; i++ {
 		backoff = time.Duration(float64(backoff) * config.BackoffMultiplier)
@@ -355,7 +355,7 @@ func TestRetryWithBackoff_MaxBackoffCap(t *testing.T) {
 			backoff = config.MaxBackoff
 		}
 	}
-	
+
 	// After several iterations, should cap at MaxBackoff
 	if backoff != config.MaxBackoff {
 		t.Errorf("Expected backoff to cap at %v, got %v", config.MaxBackoff, backoff)

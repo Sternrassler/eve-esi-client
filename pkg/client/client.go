@@ -207,7 +207,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		// Execute the HTTP request
 		var reqErr error
 		resp, reqErr = c.httpClient.Do(req)
-		
+
 		// Handle network errors
 		if reqErr != nil {
 			c.logger.Error().Err(reqErr).Str("endpoint", endpoint).Msg("HTTP request failed")
