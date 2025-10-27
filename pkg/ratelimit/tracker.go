@@ -30,6 +30,11 @@ var (
 		Name: "esi_rate_limit_throttles_total",
 		Help: "Total number of requests throttled due to warning error limit",
 	})
+
+	esiRateLimitResetsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "esi_rate_limit_resets_total",
+		Help: "Total number of error limit resets",
+	})
 )
 
 // Tracker monitors ESI error rate limits and gates requests.
@@ -118,6 +123,9 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) er
 		return fmt.Errorf("parse X-ESI-Error-Limit-Reset header: %w", err)
 	}
 
+	// Get previous state to detect resets
+	previousState, _ := t.GetState(ctx)
+
 	// Create updated state
 	now := time.Now()
 	state := &RateLimitState{
@@ -126,6 +134,15 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) er
 		LastUpdate:      now,
 	}
 	state.UpdateHealth()
+
+	// Detect rate limit reset (errors remaining increased significantly)
+	if previousState != nil && remain > previousState.ErrorsRemaining+50 {
+		esiRateLimitResetsTotal.Inc()
+		t.logger.Info().
+			Int("previous", previousState.ErrorsRemaining).
+			Int("current", remain).
+			Msg("ESI error limit reset detected")
+	}
 
 	// Store in Redis atomically
 	pipe := t.redis.Pipeline()

@@ -27,13 +27,29 @@ var (
 	esiRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "esi_request_duration_seconds",
 		Help:    "ESI request duration in seconds by endpoint",
-		Buckets: prometheus.DefBuckets,
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10},
 	}, []string{"endpoint"})
 
 	esiErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "esi_errors_total",
 		Help: "Total ESI errors by class",
 	}, []string{"class"})
+
+	esiRetriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "esi_retries_total",
+		Help: "Total number of retry attempts by error class",
+	}, []string{"error_class"})
+
+	esiRetryBackoff = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "esi_retry_backoff_seconds",
+		Help:    "Backoff duration for retries by error class",
+		Buckets: []float64{0.5, 1, 2, 5, 10, 30},
+	}, []string{"error_class"})
+
+	esiRetryExhausted = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "esi_retry_exhausted_total",
+		Help: "Total number of requests that exhausted max retry attempts",
+	}, []string{"error_class"})
 )
 
 // ErrorClass represents a classification of HTTP errors.
@@ -182,6 +198,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// Step 3: Make Conditional Request if cache hit
 	if cachedEntry != nil && cache.ShouldMakeConditionalRequest(cachedEntry) {
 		cache.AddConditionalHeaders(req, cachedEntry)
+		cache.ConditionalRequestsSent.Inc()
 		c.logger.Debug().
 			Str("endpoint", endpoint).
 			Str("etag", cachedEntry.ETag).
@@ -272,6 +289,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode == http.StatusNotModified {
 		c.logger.Debug().Str("endpoint", endpoint).Msg("304 Not Modified - using cache")
 		esiRequestsTotal.WithLabelValues(endpoint, "304").Inc()
+		cache.NotModifiedResponses.Inc()
 
 		// Update cache TTL from new expires header
 		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {

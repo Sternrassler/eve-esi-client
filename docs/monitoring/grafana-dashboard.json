@@ -1,0 +1,208 @@
+{
+  "dashboard": {
+    "title": "EVE ESI Client Monitoring",
+    "tags": ["eve-online", "esi", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "ESI Error Limit",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "esi_errors_remaining",
+            "legendFormat": "Errors Remaining"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Errors",
+            "min": 0
+          }
+        ],
+        "alert": {
+          "name": "Error Limit Critical",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [20],
+                "type": "lt"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "title": "Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(esi_requests_total[5m])",
+            "legendFormat": "{{endpoint}} - {{status}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Requests/sec"
+          }
+        ]
+      },
+      {
+        "title": "Cache Hit Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "sum(rate(esi_cache_hits_total[5m])) / (sum(rate(esi_cache_hits_total[5m])) + sum(rate(esi_cache_misses_total[5m])))",
+            "legendFormat": "Hit Rate"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Ratio",
+            "format": "percentunit",
+            "min": 0,
+            "max": 1
+          }
+        ]
+      },
+      {
+        "title": "Request Duration (P95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(esi_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Seconds",
+            "format": "s"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate by Class",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(esi_errors_total[5m])",
+            "legendFormat": "{{class}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Errors/sec"
+          }
+        ]
+      },
+      {
+        "title": "Rate Limit Actions",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(esi_rate_limit_blocks_total[5m])",
+            "legendFormat": "Blocks"
+          },
+          {
+            "expr": "rate(esi_rate_limit_throttles_total[5m])",
+            "legendFormat": "Throttles"
+          },
+          {
+            "expr": "rate(esi_rate_limit_resets_total[5m])",
+            "legendFormat": "Resets"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Events/sec"
+          }
+        ]
+      },
+      {
+        "title": "Cache Operations",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(esi_cache_hits_total[5m])",
+            "legendFormat": "Hits - {{layer}}"
+          },
+          {
+            "expr": "rate(esi_cache_misses_total[5m])",
+            "legendFormat": "Misses"
+          },
+          {
+            "expr": "rate(esi_304_responses_total[5m])",
+            "legendFormat": "304 Not Modified"
+          },
+          {
+            "expr": "rate(esi_conditional_requests_total[5m])",
+            "legendFormat": "Conditional Requests"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Operations/sec"
+          }
+        ]
+      },
+      {
+        "title": "Cache Size",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "esi_cache_size_bytes",
+            "legendFormat": "{{layer}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Bytes",
+            "format": "bytes"
+          }
+        ]
+      },
+      {
+        "title": "HTTP Status Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum(rate(esi_requests_total[5m])) by (status)",
+            "legendFormat": "{{status}}"
+          }
+        ]
+      },
+      {
+        "title": "Top Endpoints by Request Count",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "topk(10, sum(rate(esi_requests_total[5m])) by (endpoint))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Requests/sec"
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "query": "prometheus"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "10s"
+  }
+}

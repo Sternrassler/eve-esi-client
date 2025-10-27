@@ -473,16 +473,120 @@ make run
 
 ## Monitoring
 
-Prometheus metrics available at `/metrics`:
+### Metrics Endpoint
 
+Prometheus metrics available at `/metrics` endpoint:
+
+```bash
+# Service Mode
+curl http://localhost:8080/metrics
+
+# Library Mode - expose via HTTP handler
+import "github.com/prometheus/client_golang/prometheus/promhttp"
+
+http.Handle("/metrics", promhttp.Handler())
 ```
-esi_errors_remaining          # Current error limit remaining
-esi_cache_hits_total          # Cache hits by layer (memory, redis)
-esi_cache_misses_total        # Cache misses
-esi_requests_total            # Total requests by endpoint
-esi_circuit_breaker_state     # Circuit breaker state
-esi_pagination_duration       # Pagination fetch duration
+
+### Available Metrics
+
+#### Rate Limit Metrics
+- `esi_errors_remaining` (Gauge) - Current errors remaining in ESI rate limit window
+- `esi_rate_limit_blocks_total` (Counter) - Requests blocked due to critical error limit
+- `esi_rate_limit_throttles_total` (Counter) - Requests throttled due to warning error limit  
+- `esi_rate_limit_resets_total` (Counter) - Number of error limit resets detected
+
+#### Cache Metrics
+- `esi_cache_hits_total{layer="redis"}` (Counter) - Cache hits by layer
+- `esi_cache_misses_total` (Counter) - Cache misses
+- `esi_cache_size_bytes{layer="redis"}` (Gauge) - Current cache size in bytes
+- `esi_304_responses_total` (Counter) - 304 Not Modified responses  
+- `esi_conditional_requests_total` (Counter) - Conditional requests sent with If-None-Match
+- `esi_cache_errors_total{operation}` (Counter) - Cache operation errors
+
+#### Request Metrics
+- `esi_requests_total{endpoint, status}` (Counter) - Total requests by endpoint and HTTP status
+- `esi_request_duration_seconds{endpoint}` (Histogram) - Request duration by endpoint
+- `esi_errors_total{class}` (Counter) - Errors by class (client, server, rate_limit, network)
+
+#### Retry Metrics (Future)
+- `esi_retries_total{error_class}` (Counter) - Retry attempts by error class
+- `esi_retry_backoff_seconds{error_class}` (Histogram) - Backoff duration by error class
+- `esi_retry_exhausted_total{error_class}` (Counter) - Requests that exhausted max retries
+
+### Health Checks
+
+#### `/health` - Basic Health Check
+Returns `200 OK` when service is running.
+
+```bash
+curl http://localhost:8080/health
+# Response: OK
 ```
+
+#### `/ready` - Readiness Check
+Checks critical dependencies (Redis connection, rate limit state).
+
+```bash
+curl http://localhost:8080/ready
+# Response: OK (200) or Service Unavailable (503)
+```
+
+### Example Prometheus Queries
+
+```promql
+# Cache Hit Rate
+sum(rate(esi_cache_hits_total[5m])) / 
+(sum(rate(esi_cache_hits_total[5m])) + sum(rate(esi_cache_misses_total[5m])))
+
+# Error Limit Status Alert
+esi_errors_remaining < 20
+
+# Request Error Rate
+rate(esi_errors_total[5m])
+
+# P95 Request Latency
+histogram_quantile(0.95, rate(esi_request_duration_seconds_bucket[5m]))
+
+# 304 Not Modified Rate (Cache Efficiency)
+rate(esi_304_responses_total[5m]) / rate(esi_conditional_requests_total[5m])
+```
+
+### Structured Logging
+
+The client uses [zerolog](https://github.com/rs/zerolog) for structured JSON logging.
+
+#### Log Levels
+- **Debug**: Cache operations, request flow, conditional requests
+- **Info**: Successful requests, 304 responses, rate limit updates
+- **Warn**: Rate limit warnings, retry attempts, non-critical errors
+- **Error**: Failed requests, critical rate limit blocks, service errors
+
+#### Configuration
+
+```go
+import "github.com/Sternrassler/eve-esi-client/pkg/logging"
+
+// Setup global logger
+logger := logging.Setup(logging.Config{
+    Level:  logging.LevelInfo,
+    Pretty: false, // Set to true for human-readable console output
+})
+
+// Create component logger
+logger := logging.NewLogger("my-component")
+logger.Info().Str("key", "value").Msg("message")
+```
+
+#### Log Context Fields
+- `endpoint` - ESI endpoint path
+- `status_code` - HTTP status code
+- `duration` - Request duration
+- `error_class` - Error classification
+- `cache_hit` - Cache hit indicator
+- `errors_remaining` - Current ESI error limit
+- `etag` - ETag for conditional requests
+
+See [pkg/metrics/metrics.go](pkg/metrics/metrics.go) for complete metrics documentation.
 
 ## License
 

@@ -32,11 +32,19 @@ var (
 		[]string{"layer"}, // "redis"
 	)
 
-	// ConditionalRequests tracks 304 Not Modified responses
-	ConditionalRequests = promauto.NewCounter(
+	// NotModifiedResponses tracks 304 Not Modified responses
+	NotModifiedResponses = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "esi_304_responses_total",
 			Help: "Total number of ESI 304 Not Modified responses",
+		},
+	)
+
+	// ConditionalRequestsSent tracks conditional requests sent with If-None-Match
+	ConditionalRequestsSent = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "esi_conditional_requests_total",
+			Help: "Total number of conditional requests sent with If-None-Match",
 		},
 	)
 
