@@ -16,17 +16,17 @@ import (
 
 // MarketOrder represents an ESI market order.
 type MarketOrder struct {
-	OrderID     int64   `json:"order_id"`
-	TypeID      int     `json:"type_id"`
-	LocationID  int64   `json:"location_id"`
-	VolumeTotal int     `json:"volume_total"`
-	VolumeRemain int    `json:"volume_remain"`
-	MinVolume   int     `json:"min_volume"`
-	Price       float64 `json:"price"`
-	IsBuyOrder  bool    `json:"is_buy_order"`
-	Duration    int     `json:"duration"`
-	Issued      string  `json:"issued"`
-	Range       string  `json:"range"`
+	OrderID      int64   `json:"order_id"`
+	TypeID       int     `json:"type_id"`
+	LocationID   int64   `json:"location_id"`
+	VolumeTotal  int     `json:"volume_total"`
+	VolumeRemain int     `json:"volume_remain"`
+	MinVolume    int     `json:"min_volume"`
+	Price        float64 `json:"price"`
+	IsBuyOrder   bool    `json:"is_buy_order"`
+	Duration     int     `json:"duration"`
+	Issued       string  `json:"issued"`
+	Range        string  `json:"range"`
 }
 
 func main() {
@@ -47,7 +47,7 @@ func main() {
 
 	// 2. Create ESI client with configuration
 	cfg := client.DefaultConfig(redisClient, "EVE-ESI-Example/1.0.0 (your-email@example.com)")
-	
+
 	// Optional: Customize configuration
 	cfg.MaxRetries = 3
 	cfg.InitialBackoff = 1 * time.Second
@@ -63,9 +63,9 @@ func main() {
 	// 3. Fetch market orders for The Forge region (Jita)
 	regionID := 10000002
 	endpoint := fmt.Sprintf("/v1/markets/%d/orders/", regionID)
-	
+
 	fmt.Printf("\n📊 Fetching market orders from region %d...\n", regionID)
-	
+
 	resp, err := esiClient.Get(ctx, endpoint)
 	if err != nil {
 		log.Fatalf("❌ Request failed: %v", err)

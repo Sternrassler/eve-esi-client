@@ -22,7 +22,7 @@ type MockESI struct {
 	server   *httptest.Server
 	mu       sync.RWMutex
 	handlers map[string]func(w http.ResponseWriter, r *http.Request)
-	
+
 	// Tracking
 	RequestCount      int
 	ConditionalCount  int
@@ -39,7 +39,7 @@ func NewMockESI() *MockESI {
 		mock.mu.Lock()
 		mock.RequestCount++
 		mock.LastRequestHeader = r.Header.Clone()
-		
+
 		// Track conditional requests
 		if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
 			mock.ConditionalCount++

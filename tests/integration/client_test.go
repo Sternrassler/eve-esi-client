@@ -65,7 +65,6 @@ type testTransport struct {
 func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Redirect to mock server
 	req.URL.Scheme = "http"
-	req.URL.Host = req.URL.Host
 	if req.URL.Host == "" || req.URL.Host == "esi.evetech.net" {
 		mockURL := t.mockServer.URL()
 		req.URL.Host = mockURL[7:] // Remove "http://"
@@ -273,7 +272,7 @@ func TestRateLimitBlock(t *testing.T) {
 	redisClient.Set(ctx, "esi:rate_limit:errors_remaining", 3, 0)
 	redisClient.Set(ctx, "esi:rate_limit:reset_timestamp", time.Now().Add(60*time.Second).Unix(), 0)
 	redisClient.Set(ctx, "esi:rate_limit:last_update", time.Now().Format(time.RFC3339), 0)
-	
+
 	// Small delay to ensure Redis persistence
 	time.Sleep(50 * time.Millisecond)
 
@@ -312,7 +311,7 @@ func TestRetry5xxErrors(t *testing.T) {
 	requestCount := 0
 	mockESI.SetHandler("/v1/status/", func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
-		
+
 		w.Header().Set("X-ESI-Error-Limit-Remain", "95")
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
 
@@ -333,7 +332,7 @@ func TestRetry5xxErrors(t *testing.T) {
 	cfg := client.DefaultConfig(redisClient, "TestApp/1.0.0")
 	cfg.MaxRetries = 3
 	cfg.InitialBackoff = 100 * time.Millisecond // Speed up test
-	
+
 	c, err := client.New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
@@ -380,7 +379,7 @@ func TestNoRetry4xxErrors(t *testing.T) {
 
 	cfg := client.DefaultConfig(redisClient, "TestApp/1.0.0")
 	cfg.MaxRetries = 3
-	
+
 	c, err := client.New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
