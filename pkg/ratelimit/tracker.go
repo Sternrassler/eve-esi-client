@@ -131,7 +131,7 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) er
 	pipe := t.redis.Pipeline()
 	pipe.Set(ctx, RedisKeyErrorsRemaining, remain, 0)
 	pipe.Set(ctx, RedisKeyResetTimestamp, state.ResetAt.Unix(), 0)
-	
+
 	lastUpdateJSON, err := json.Marshal(state.LastUpdate)
 	if err != nil {
 		return fmt.Errorf("marshal last update: %w", err)
@@ -177,7 +177,7 @@ func (t *Tracker) ShouldAllowRequest(ctx context.Context) (bool, error) {
 	// Critical: Block all requests
 	if state.NeedsCriticalBlock() {
 		waitDuration := state.TimeUntilReset()
-		
+
 		t.logger.Error().
 			Int("errors_remaining", state.ErrorsRemaining).
 			Dur("wait_duration", waitDuration).

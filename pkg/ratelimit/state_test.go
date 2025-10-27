@@ -137,9 +137,9 @@ func TestRateLimitState_NeedsThrottling(t *testing.T) {
 
 func TestRateLimitState_TimeUntilReset(t *testing.T) {
 	tests := []struct {
-		name     string
-		resetAt  time.Time
-		expected time.Duration
+		name      string
+		resetAt   time.Time
+		expected  time.Duration
 		tolerance time.Duration
 	}{
 		{
@@ -162,7 +162,7 @@ func TestRateLimitState_TimeUntilReset(t *testing.T) {
 				ResetAt: tt.resetAt,
 			}
 			result := state.TimeUntilReset()
-			
+
 			if tt.expected == 0 {
 				if result != 0 {
 					t.Errorf("TimeUntilReset() = %v, want 0 for past reset time", result)
@@ -220,9 +220,9 @@ func TestRateLimitState_UpdateHealth(t *testing.T) {
 				IsHealthy:       false, // Start as unhealthy
 			}
 			state.UpdateHealth()
-			
+
 			if state.IsHealthy != tt.expectedHealthy {
-				t.Errorf("UpdateHealth() set IsHealthy = %v, want %v (errors_remaining=%d)", 
+				t.Errorf("UpdateHealth() set IsHealthy = %v, want %v (errors_remaining=%d)",
 					state.IsHealthy, tt.expectedHealthy, tt.errorsRemaining)
 			}
 		})
@@ -232,12 +232,12 @@ func TestRateLimitState_UpdateHealth(t *testing.T) {
 func TestThresholdConstants(t *testing.T) {
 	// Verify threshold ordering
 	if ErrorThresholdCritical >= ErrorThresholdWarning {
-		t.Errorf("ErrorThresholdCritical (%d) must be less than ErrorThresholdWarning (%d)", 
+		t.Errorf("ErrorThresholdCritical (%d) must be less than ErrorThresholdWarning (%d)",
 			ErrorThresholdCritical, ErrorThresholdWarning)
 	}
-	
+
 	if ErrorThresholdWarning >= ErrorThresholdHealthy {
-		t.Errorf("ErrorThresholdWarning (%d) must be less than ErrorThresholdHealthy (%d)", 
+		t.Errorf("ErrorThresholdWarning (%d) must be less than ErrorThresholdHealthy (%d)",
 			ErrorThresholdWarning, ErrorThresholdHealthy)
 	}
 }

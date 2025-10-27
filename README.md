@@ -173,6 +173,64 @@ This client strictly follows ESI rules to prevent bans:
 ✅ **Spread Load**: Rate limiting prevents spiky traffic  
 ✅ **User-Agent**: Required with contact info  
 
+## Rate Limiting
+
+ESI uses **error rate limiting** instead of request rate limiting. The client automatically monitors ESI's error limit headers to prevent IP bans.
+
+### How It Works
+
+The rate limit tracker monitors two critical headers:
+- `X-ESI-Error-Limit-Remain`: Number of errors remaining before ESI blocks requests
+- `X-ESI-Error-Limit-Reset`: Seconds until the error limit resets
+
+### Thresholds
+
+The tracker operates in three states:
+
+| State | Errors Remaining | Behavior |
+|-------|-----------------|----------|
+| 🟢 **Healthy** | ≥ 50 | Normal operation, no restrictions |
+| 🟡 **Warning** | 20-49 | Requests throttled (1s delay between calls) |
+| 🔴 **Critical** | < 5 | All requests blocked until reset |
+
+### State Storage
+
+Rate limit state is shared across all client instances via Redis, ensuring coordinated behavior in multi-instance deployments.
+
+### Metrics
+
+Prometheus metrics are available for monitoring:
+- `esi_errors_remaining` - Current error limit remaining
+- `esi_rate_limit_blocks_total` - Total requests blocked due to critical state
+- `esi_rate_limit_throttles_total` - Total requests throttled due to warning state
+
+### Library Usage
+
+```go
+import (
+    "github.com/Sternrassler/eve-esi-client/pkg/ratelimit"
+    "github.com/redis/go-redis/v9"
+    "github.com/rs/zerolog"
+)
+
+// Create tracker
+redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+logger := zerolog.New(os.Stderr)
+tracker := ratelimit.NewTracker(redisClient, logger)
+
+// Check if request should be allowed
+allowed, err := tracker.ShouldAllowRequest(ctx)
+if !allowed {
+    // Request blocked - wait for rate limit reset
+    return
+}
+
+// After receiving ESI response, update state from headers
+tracker.UpdateFromHeaders(ctx, resp.Header)
+```
+
+**Important**: Exceeding the error limit results in **permanent IP ban** from ESI. The tracker prevents this by proactively blocking requests when the limit becomes critical.
+
 ## Architecture Decision Records
 
 See [docs/adr/](docs/adr/) for detailed design decisions:

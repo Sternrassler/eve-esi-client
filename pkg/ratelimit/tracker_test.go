@@ -69,7 +69,7 @@ func TestUpdateFromHeaders_ValidHeaders(t *testing.T) {
 					return
 				}
 			}
-			
+
 			if val := headers.Get("X-ESI-Error-Limit-Reset"); val != "" {
 				var err error
 				if _, err = parseIntHeader(val); err != nil && !tt.shouldError {
@@ -144,7 +144,7 @@ func TestUpdateFromHeaders_InvalidHeaders(t *testing.T) {
 			}
 
 			err := tracker.UpdateFromHeaders(context.Background(), headers)
-			
+
 			if tt.shouldError && err == nil {
 				t.Error("Expected error but got nil")
 			}
