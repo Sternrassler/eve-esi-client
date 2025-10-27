@@ -1,4 +1,3 @@
-package client
 // Package client provides the core ESI HTTP client with rate limiting,
 // caching, and error handling.
 package client

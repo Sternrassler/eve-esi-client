@@ -1,5 +1,4 @@
-package mainpackage esiproxy
-
+package main
 
 import (
 	"context"
