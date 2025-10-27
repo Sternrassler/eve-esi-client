@@ -49,7 +49,9 @@ func setupTestRedis(t *testing.T) (*redis.Client, func()) {
 
 	cleanup := func() {
 		redisClient.Close()
-		redisC.Terminate(ctx)
+		if err := redisC.Terminate(ctx); err != nil {
+			t.Logf("Failed to terminate Redis container: %v", err)
+		}
 	}
 
 	return redisClient, cleanup
