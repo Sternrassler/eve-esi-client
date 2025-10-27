@@ -44,7 +44,7 @@ func main() {
 	addr := ":" + port
 	log.Printf("Starting ESI proxy server on %s", addr)
 	log.Printf("User-Agent: %s", userAgent)
-	
+
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

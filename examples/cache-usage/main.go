@@ -103,7 +103,10 @@ func conditionalRequestExample(ctx context.Context, manager *cache.Manager) {
 	}
 
 	// Store in cache
-	manager.Set(ctx, key, entry)
+	if err := manager.Set(ctx, key, entry); err != nil {
+		fmt.Printf("Warning: Failed to store in cache: %v\n", err)
+		return
+	}
 
 	// Check if we should make a conditional request
 	if cache.ShouldMakeConditionalRequest(entry) {
@@ -168,7 +171,10 @@ func handleESIResponse(resp *http.Response, manager *cache.Manager, key cache.Ca
 	// Handle 304 Not Modified
 	if resp.StatusCode == http.StatusNotModified {
 		fmt.Println("304 Not Modified - using cached data")
-		cache.ConditionalRequests.Inc() // Increment metric
+		
+		// Note: In production, metrics would be incremented by the Manager internally.
+		// This is shown here for demonstration purposes.
+		cache.ConditionalRequests.Inc()
 
 		// Update TTL from new expires header
 		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {
