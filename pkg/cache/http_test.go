@@ -93,9 +93,9 @@ func TestParseExpires(t *testing.T) {
 	pastTime := now.Add(-1 * time.Hour)
 
 	tests := []struct {
-		name        string
-		headers     http.Header
-		wantWithin  time.Duration // Allow some tolerance for timing
+		name         string
+		headers      http.Header
+		wantWithin   time.Duration // Allow some tolerance for timing
 		expectFuture bool
 	}{
 		{
@@ -103,13 +103,13 @@ func TestParseExpires(t *testing.T) {
 			headers: http.Header{
 				"Expires": []string{futureTime.Format(http.TimeFormat)},
 			},
-			wantWithin:  2 * time.Second,
+			wantWithin:   2 * time.Second,
 			expectFuture: true,
 		},
 		{
-			name:        "no expires header",
-			headers:     http.Header{},
-			wantWithin:  2 * time.Second,
+			name:         "no expires header",
+			headers:      http.Header{},
+			wantWithin:   2 * time.Second,
 			expectFuture: true,
 		},
 		{
@@ -117,7 +117,7 @@ func TestParseExpires(t *testing.T) {
 			headers: http.Header{
 				"Expires": []string{"not a valid date"},
 			},
-			wantWithin:  2 * time.Second,
+			wantWithin:   2 * time.Second,
 			expectFuture: true,
 		},
 		{
@@ -125,7 +125,7 @@ func TestParseExpires(t *testing.T) {
 			headers: http.Header{
 				"Expires": []string{pastTime.Format(http.TimeFormat)},
 			},
-			wantWithin:  2 * time.Second,
+			wantWithin:   2 * time.Second,
 			expectFuture: false,
 		},
 	}
@@ -213,10 +213,10 @@ func TestShouldMakeConditionalRequest(t *testing.T) {
 
 func TestAddConditionalHeaders(t *testing.T) {
 	tests := []struct {
-		name         string
-		entry        *CacheEntry
-		wantHeader   string
-		wantValue    string
+		name       string
+		entry      *CacheEntry
+		wantHeader string
+		wantValue  string
 	}{
 		{
 			name: "add If-None-Match with ETag",

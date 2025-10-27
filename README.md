@@ -173,6 +173,89 @@ This client strictly follows ESI rules to prevent bans:
 ✅ **Spread Load**: Rate limiting prevents spiky traffic  
 ✅ **User-Agent**: Required with contact info  
 
+## Caching
+
+The cache manager implements ESI-compliant caching with Redis:
+
+### Features
+
+- **Strict expires header compliance** - Prevents IP bans
+- **ETag support** - Conditional requests with `If-None-Match`
+- **Last-Modified support** - Conditional requests with `If-Modified-Since`
+- **Automatic TTL management** - Based on ESI `expires` header
+- **Prometheus metrics** - Cache hits, misses, and 304 responses
+
+### Usage
+
+```go
+import (
+    "github.com/Sternrassler/eve-esi-client/pkg/cache"
+    "github.com/redis/go-redis/v9"
+)
+
+// Create cache manager
+redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+cacheManager := cache.NewManager(redisClient)
+
+// Create cache key
+key := cache.CacheKey{
+    Endpoint: "/v1/markets/10000002/orders/",
+    QueryParams: url.Values{"order_type": []string{"all"}},
+}
+
+// Try to get from cache
+entry, err := cacheManager.Get(ctx, key)
+if err == cache.ErrCacheMiss {
+    // Cache miss - fetch from ESI
+    resp, err := client.Get(ctx, endpoint)
+    
+    // Convert response to cache entry
+    entry, _ = cache.ResponseToEntry(resp)
+    
+    // Store in cache
+    cacheManager.Set(ctx, key, entry)
+}
+
+// Use cached data
+fmt.Println(string(entry.Data))
+```
+
+### Conditional Requests
+
+```go
+// Check cached entry
+entry, err := cacheManager.Get(ctx, key)
+if err == nil && cache.ShouldMakeConditionalRequest(entry) {
+    // Add If-None-Match header
+    cache.AddConditionalHeaders(req, entry)
+    
+    // Make request
+    resp, _ := client.Do(req)
+    
+    // Handle 304 Not Modified
+    if resp.StatusCode == http.StatusNotModified {
+        // Update TTL from new expires header
+        newExpires := cache.parseExpires(resp.Header)
+        cacheManager.UpdateTTL(ctx, key, newExpires)
+        
+        // Use cached data
+        return entry.Data
+    }
+}
+```
+
+### Metrics
+
+Available Prometheus metrics:
+
+```
+esi_cache_hits_total{layer="redis"}      # Cache hits
+esi_cache_misses_total                   # Cache misses
+esi_cache_size_bytes{layer="redis"}      # Cache size in bytes
+esi_304_responses_total                  # 304 Not Modified responses
+esi_cache_errors_total{operation}        # Cache operation errors
+```
+
 ## Architecture Decision Records
 
 See [docs/adr/](docs/adr/) for detailed design decisions:

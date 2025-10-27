@@ -42,14 +42,17 @@ func (m *Manager) Get(ctx context.Context, key CacheKey) (*CacheEntry, error) {
 	data, err := m.redis.Get(ctx, cacheKey).Bytes()
 	if err != nil {
 		if err == redis.Nil {
+			CacheMisses.Inc()
 			return nil, ErrCacheMiss
 		}
+		CacheErrors.WithLabelValues("get").Inc()
 		return nil, fmt.Errorf("redis get: %w", err)
 	}
 
 	// Unmarshal entry
 	var entry CacheEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
+		CacheErrors.WithLabelValues("get").Inc()
 		return nil, fmt.Errorf("%w: %v", ErrInvalidEntry, err)
 	}
 
@@ -57,8 +60,13 @@ func (m *Manager) Get(ctx context.Context, key CacheKey) (*CacheEntry, error) {
 	if entry.IsExpired() {
 		// Delete expired entry
 		_ = m.Delete(ctx, key)
+		CacheMisses.Inc()
 		return nil, ErrCacheMiss
 	}
+
+	// Cache hit
+	CacheHits.WithLabelValues("redis").Inc()
+	CacheSize.WithLabelValues("redis").Add(float64(len(data)))
 
 	return &entry, nil
 }
@@ -82,13 +90,18 @@ func (m *Manager) Set(ctx context.Context, key CacheKey, entry *CacheEntry) erro
 	// Marshal entry
 	data, err := json.Marshal(entry)
 	if err != nil {
+		CacheErrors.WithLabelValues("set").Inc()
 		return fmt.Errorf("marshal cache entry: %w", err)
 	}
 
 	// Store in Redis with TTL
 	if err := m.redis.Set(ctx, cacheKey, data, ttl).Err(); err != nil {
+		CacheErrors.WithLabelValues("set").Inc()
 		return fmt.Errorf("redis set: %w", err)
 	}
+
+	// Update cache size metric
+	CacheSize.WithLabelValues("redis").Add(float64(len(data)))
 
 	return nil
 }
@@ -98,6 +111,7 @@ func (m *Manager) Delete(ctx context.Context, key CacheKey) error {
 	cacheKey := key.String()
 
 	if err := m.redis.Del(ctx, cacheKey).Err(); err != nil {
+		CacheErrors.WithLabelValues("delete").Inc()
 		return fmt.Errorf("redis del: %w", err)
 	}
 

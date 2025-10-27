@@ -26,7 +26,8 @@ type CacheKey struct {
 // Format: esi:endpoint:param1=val1:param2=val2:query1=val1:char=123456
 //
 // Example:
-//   esi:/v4/markets/10000002/orders/:order_type=all:char=0
+//
+//	esi:/v4/markets/10000002/orders/:order_type=all:char=0
 func (k CacheKey) String() string {
 	parts := []string{"esi"}
 
