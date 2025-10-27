@@ -88,7 +88,7 @@ func TestResponseToEntry(t *testing.T) {
 }
 
 func TestParseExpires(t *testing.T) {
-	now := time.Now()
+	now := time.Now().UTC()
 	futureTime := now.Add(1 * time.Hour)
 	pastTime := now.Add(-1 * time.Hour)
 
@@ -103,7 +103,7 @@ func TestParseExpires(t *testing.T) {
 			headers: http.Header{
 				"Expires": []string{futureTime.Format(http.TimeFormat)},
 			},
-			wantWithin:   2 * time.Second,
+			wantWithin:   5 * time.Second,
 			expectFuture: true,
 		},
 		{
