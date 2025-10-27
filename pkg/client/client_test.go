@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -267,8 +268,12 @@ func TestDo_RateLimitBlock(t *testing.T) {
 
 	// Pre-populate Redis with critical rate limit state
 	ctx := context.Background()
+	now := time.Now()
 	redisClient.Set(ctx, "esi:rate_limit:errors_remaining", 3, 0)
-	redisClient.Set(ctx, "esi:rate_limit:reset_timestamp", time.Now().Add(60*time.Second).Unix(), 0)
+	redisClient.Set(ctx, "esi:rate_limit:reset_timestamp", now.Add(60*time.Second).Unix(), 0)
+	// Add last_update to ensure GetState() doesn't return default healthy state
+	lastUpdateJSON, _ := json.Marshal(now)
+	redisClient.Set(ctx, "esi:rate_limit:last_update", lastUpdateJSON, 0)
 
 	cfg := DefaultConfig(redisClient, "TestApp/1.0.0")
 	client, err := New(cfg)
@@ -449,13 +454,15 @@ func TestCacheEntryToResponse(t *testing.T) {
 		logger: logger,
 	}
 
+	// Create headers properly using Set() to ensure canonical form
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	headers.Set("ETag", `"abc123"`)
+
 	entry := &cache.CacheEntry{
 		StatusCode: 200,
-		Headers: http.Header{
-			"Content-Type": []string{"application/json"},
-			"ETag":         []string{`"abc123"`},
-		},
-		Data: []byte(`{"test": "data"}`),
+		Headers:    headers,
+		Data:       []byte(`{"test": "data"}`),
 	}
 
 	resp := client.cacheEntryToResponse(entry)
