@@ -171,7 +171,7 @@ func handleESIResponse(resp *http.Response, manager *cache.Manager, key cache.Ca
 	// Handle 304 Not Modified
 	if resp.StatusCode == http.StatusNotModified {
 		fmt.Println("304 Not Modified - using cached data")
-		
+
 		// Note: In production, metrics would be incremented by the Manager internally.
 		// This is shown here for demonstration purposes.
 		cache.ConditionalRequests.Inc()
