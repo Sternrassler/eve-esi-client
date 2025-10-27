@@ -192,24 +192,80 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	req.Header.Set("User-Agent", c.config.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	// Step 5: Execute HTTP Request
+	// Step 5: Execute HTTP Request with Retry Logic
 	c.logger.Debug().
 		Str("endpoint", endpoint).
 		Str("method", req.Method).
 		Msg("Executing ESI request")
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		c.logger.Error().Err(err).Str("endpoint", endpoint).Msg("HTTP request failed")
-		errClass := c.classifyError(nil, err)
-		esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
-		esiRequestsTotal.WithLabelValues(endpoint, "network_error").Inc()
-		return nil, fmt.Errorf("http request: %w", err)
-	}
+	var resp *http.Response
+	var lastErr error
+	var errClass ErrorClass
 
-	// Step 6: Update Rate Limit from headers
-	if err := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header); err != nil {
-		c.logger.Warn().Err(err).Msg("Failed to update rate limit from headers")
+	// Wrap the HTTP request in retry logic
+	retryErr := retryWithBackoff(ctx, ErrorClassNetwork, func() error {
+		// Execute the HTTP request
+		var reqErr error
+		resp, reqErr = c.httpClient.Do(req)
+
+		// Handle network errors
+		if reqErr != nil {
+			c.logger.Error().Err(reqErr).Str("endpoint", endpoint).Msg("HTTP request failed")
+			errClass = c.classifyError(nil, reqErr)
+			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
+			esiRequestsTotal.WithLabelValues(endpoint, "network_error").Inc()
+			lastErr = reqErr
+			return reqErr
+		}
+
+		// Update Rate Limit from headers
+		if err := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header); err != nil {
+			c.logger.Warn().Err(err).Msg("Failed to update rate limit from headers")
+		}
+
+		// Handle 304 Not Modified (not an error, return success)
+		if resp.StatusCode == http.StatusNotModified {
+			return nil
+		}
+
+		// Handle HTTP errors
+		if resp.StatusCode >= 400 {
+			errClass = c.classifyError(resp, nil)
+			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
+			esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
+
+			c.logger.Warn().
+				Str("endpoint", endpoint).
+				Int("status", resp.StatusCode).
+				Str("error_class", string(errClass)).
+				Msg("ESI request error")
+
+			// Check if we should retry this error
+			if shouldRetry(errClass) {
+				lastErr = &ESIError{
+					StatusCode: resp.StatusCode,
+					ErrorClass: errClass,
+					Message:    resp.Status,
+				}
+				resp.Body.Close() // Close the body before retrying
+				return lastErr
+			}
+
+			// Don't retry client errors
+			return nil
+		}
+
+		// Success
+		esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
+		return nil
+	})
+
+	// Handle retry exhaustion
+	if retryErr != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		return nil, retryErr
 	}
 
 	// Step 7: Handle 304 Not Modified
@@ -231,22 +287,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return c.cacheEntryToResponse(cachedEntry), nil
 	}
 
-	// Step 8: Handle errors
-	if resp.StatusCode >= 400 {
-		errClass := c.classifyError(resp, nil)
-		esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
-		esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
-
-		c.logger.Warn().
-			Str("endpoint", endpoint).
-			Int("status", resp.StatusCode).
-			Str("error_class", string(errClass)).
-			Msg("ESI request error")
-	} else {
-		esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
-	}
-
-	// Step 9: Update Cache on success
+	// Step 8: Update Cache on success
 	if resp.StatusCode == http.StatusOK {
 		entry, err := cache.ResponseToEntry(resp)
 		if err != nil {

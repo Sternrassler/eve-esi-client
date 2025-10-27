@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -525,4 +526,173 @@ func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.URL.Scheme = "http"
 	req.URL.Host = t.server.URL[7:] // Remove "http://" prefix
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestDo_RetryOnServerError(t *testing.T) {
+	redisClient := setupTestRedis(t)
+
+	// Server that fails twice, then succeeds
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
+		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
+
+		if attemptCount < 3 {
+			// Fail with 500 for first two attempts
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		// Succeed on third attempt
+		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success": true}`))
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig(redisClient, "TestApp/1.0.0")
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Do() failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 after retry, got %d", resp.StatusCode)
+	}
+	if attemptCount != 3 {
+		t.Errorf("Expected 3 attempts (2 retries), got %d", attemptCount)
+	}
+}
+
+func TestDo_NoRetryOnClientError(t *testing.T) {
+	redisClient := setupTestRedis(t)
+
+	// Server that always returns 404
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
+		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig(redisClient, "TestApp/1.0.0")
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	resp, err := client.Do(req)
+
+	// Should not error out, but return the 404 response
+	if err != nil {
+		t.Fatalf("Do() failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", resp.StatusCode)
+	}
+	// Should only attempt once (no retry for client errors)
+	if attemptCount != 1 {
+		t.Errorf("Expected 1 attempt (no retry for 4xx), got %d", attemptCount)
+	}
+}
+
+func TestDo_RetryOnRateLimit(t *testing.T) {
+	redisClient := setupTestRedis(t)
+
+	// Server that returns 520 once, then succeeds
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
+		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
+
+		if attemptCount == 1 {
+			// Return 520 rate limit error
+			w.WriteHeader(520)
+			return
+		}
+
+		// Succeed on second attempt
+		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success": true}`))
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig(redisClient, "TestApp/1.0.0")
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Do() failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 after retry, got %d", resp.StatusCode)
+	}
+	if attemptCount != 2 {
+		t.Errorf("Expected 2 attempts (1 retry), got %d", attemptCount)
+	}
+
+	// Rate limit retry should have waited (initial backoff is 5s, with jitter it's 4-6s)
+	if duration < 3*time.Second {
+		t.Errorf("Expected at least 3s delay for rate limit retry, got %v", duration)
+	}
+}
+
+func TestDo_RetryExhausted(t *testing.T) {
+	redisClient := setupTestRedis(t)
+
+	// Server that always fails with 500
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("X-ESI-Error-Limit-Remain", "100")
+		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig(redisClient, "TestApp/1.0.0")
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", server.URL+"/test", nil)
+	_, err = client.Do(req)
+
+	// Should fail with retry exhausted error
+	if err == nil {
+		t.Error("Expected error, got nil")
+	}
+	if !errors.Is(err, ErrRetryExhausted) {
+		t.Errorf("Expected ErrRetryExhausted, got %v", err)
+	}
+	// Should attempt 3 times (max attempts)
+	if attemptCount != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attemptCount)
+	}
 }

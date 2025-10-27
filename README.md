@@ -339,6 +339,101 @@ tracker.UpdateFromHeaders(ctx, resp.Header)
 
 **Important**: Exceeding the error limit results in **permanent IP ban** from ESI. The tracker prevents this by proactively blocking requests when the limit becomes critical.
 
+## Error Handling & Retry Logic
+
+The client implements intelligent retry logic with exponential backoff to handle transient errors while protecting against wasting the error budget.
+
+### Error Classification
+
+All errors are classified into four categories:
+
+| Error Class | HTTP Status | Retry? | Description |
+|------------|-------------|--------|-------------|
+| **Client** | 4xx | ❌ No | Client errors (invalid request, not found, etc.) |
+| **Server** | 5xx | ✅ Yes | ESI server errors (temporary issues) |
+| **Rate Limit** | 520 | ✅ Yes | Endpoint-specific rate limit exceeded |
+| **Network** | - | ✅ Yes | Connection timeouts, DNS failures, etc. |
+
+### Retry Strategies
+
+Different error classes use different retry strategies:
+
+**Server Errors (5xx)**
+- Max Attempts: 3
+- Initial Backoff: 1s
+- Max Backoff: 10s
+- Multiplier: 2.0x
+
+**Rate Limit (520)**
+- Max Attempts: 3
+- Initial Backoff: 5s (longer wait)
+- Max Backoff: 60s
+- Multiplier: 2.0x
+
+**Network Errors**
+- Max Attempts: 3
+- Initial Backoff: 2s
+- Max Backoff: 30s
+- Multiplier: 2.0x
+
+### Exponential Backoff with Jitter
+
+The client uses exponential backoff with ±20% jitter to prevent thundering herd:
+
+```
+Attempt 1: Immediate
+Attempt 2: Wait ~1s (0.8s - 1.2s with jitter)
+Attempt 3: Wait ~2s (1.6s - 2.4s with jitter)
+```
+
+### Context Cancellation
+
+All retry operations respect context cancellation, allowing you to set timeouts:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+resp, err := client.Get(ctx, "/v1/status/")
+if errors.Is(err, client.ErrContextCancelled) {
+    // Request cancelled or timed out
+}
+```
+
+### Why NO Retry for 4xx?
+
+**Client errors (4xx) are NEVER retried** because:
+1. They count against your error budget
+2. Retrying won't fix the problem (invalid request)
+3. Wasting error budget can lead to IP ban
+
+### Metrics
+
+Prometheus metrics track retry behavior:
+- `esi_retries_total{error_class}` - Total retry attempts by error class
+- `esi_retry_backoff_seconds{error_class}` - Backoff duration histogram
+- `esi_retry_exhausted_total{error_class}` - Times max retries were reached
+
+### Error Handling Example
+
+```go
+resp, err := client.Get(ctx, "/v1/markets/10000002/orders/")
+if err != nil {
+    if errors.Is(err, client.ErrRetryExhausted) {
+        // All retry attempts failed
+        log.Error().Err(err).Msg("Request failed after retries")
+    } else if errors.Is(err, client.ErrContextCancelled) {
+        // Context timeout or cancellation
+        log.Warn().Msg("Request cancelled")
+    } else {
+        // Other error (e.g., 4xx client error - no retry)
+        log.Error().Err(err).Msg("Request failed")
+    }
+    return
+}
+defer resp.Body.Close()
+```
+
 ## Architecture Decision Records
 
 See [docs/adr/](docs/adr/) for detailed design decisions:
