@@ -353,14 +353,7 @@ func (c *Client) classifyError(resp *http.Response, err error) ErrorClass {
 
 // cacheEntryToResponse converts a cache entry back to an HTTP response.
 func (c *Client) cacheEntryToResponse(entry *cache.CacheEntry) *http.Response {
-	return &http.Response{
-		StatusCode: entry.StatusCode,
-		Header:     entry.Headers.Clone(),
-		Body:       http.NoBody,
-		// Note: For full response reconstruction with body, we would need to
-		// return io.NopCloser(bytes.NewReader(entry.Data)) but for now
-		// we return NoBody as the caller should use the cached data directly
-	}
+	return cache.EntryToResponse(entry)
 }
 
 // Get performs a GET request to an ESI endpoint.
@@ -377,4 +370,14 @@ func (c *Client) Get(ctx context.Context, endpoint string) (*http.Response, erro
 func (c *Client) Close() error {
 	// TODO: Cleanup resources
 	return nil
+}
+
+// SetHTTPClient sets a custom HTTP client (for testing).
+func (c *Client) SetHTTPClient(client *http.Client) {
+	c.httpClient = client
+}
+
+// GetCache returns the cache manager (for testing).
+func (c *Client) GetCache() *cache.Manager {
+	return c.cache
 }
