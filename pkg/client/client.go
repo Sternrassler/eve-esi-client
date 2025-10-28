@@ -372,12 +372,14 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// SetHTTPClient sets a custom HTTP client (for testing).
+// SetHTTPClient sets a custom HTTP client.
+// INTERNAL USE: Testing only. Not part of public API.
 func (c *Client) SetHTTPClient(client *http.Client) {
 	c.httpClient = client
 }
 
-// GetCache returns the cache manager (for testing).
+// GetCache returns the cache manager.
+// INTERNAL USE: Testing only. Not part of public API.
 func (c *Client) GetCache() *cache.Manager {
 	return c.cache
 }
