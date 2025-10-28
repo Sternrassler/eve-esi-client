@@ -105,7 +105,7 @@ func (m *MockESI) SetResponse(path string, resp MockESIResponse) {
 		// Write status and body
 		w.WriteHeader(resp.StatusCode)
 		if resp.Body != "" {
-			w.Write([]byte(resp.Body))
+			_, _ = w.Write([]byte(resp.Body))
 		}
 	})
 }
@@ -148,7 +148,7 @@ func (m *MockESI) defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", `"default-etag"`)
 	w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "ok"}`))
+	_, _ = w.Write([]byte(`{"status": "ok"}`))
 }
 
 // NewHealthyResponse creates a standard 200 OK response with ESI headers.
@@ -235,6 +235,6 @@ func NewConditionalHandler(etag string, data string) func(w http.ResponseWriter,
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(data))
+		_, _ = w.Write([]byte(data))
 	}
 }

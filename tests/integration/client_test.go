@@ -51,7 +51,7 @@ func setupRedis(t *testing.T) (*redis.Client, func()) {
 
 	cleanup := func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 	}
 
 	return redisClient, cleanup
@@ -318,7 +318,7 @@ func TestRetry5xxErrors(t *testing.T) {
 		// First 2 attempts fail with 500
 		if requestCount <= 2 {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error": "server error"}`))
+			_, _ = w.Write([]byte(`{"error": "server error"}`))
 			return
 		}
 
@@ -326,7 +326,7 @@ func TestRetry5xxErrors(t *testing.T) {
 		w.Header().Set("ETag", `"success"`)
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "ok"}`))
+		_, _ = w.Write([]byte(`{"status": "ok"}`))
 	})
 
 	cfg := client.DefaultConfig(redisClient, "TestApp/1.0.0")
@@ -374,7 +374,7 @@ func TestNoRetry4xxErrors(t *testing.T) {
 		w.Header().Set("X-ESI-Error-Limit-Remain", "95")
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error": "not found"}`))
+		_, _ = w.Write([]byte(`{"error": "not found"}`))
 	})
 
 	cfg := client.DefaultConfig(redisClient, "TestApp/1.0.0")
@@ -466,7 +466,7 @@ func TestCacheExpiration(t *testing.T) {
 		w.Header().Set("Expires", time.Now().Add(1*time.Second).Format(http.TimeFormat))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "ok"}`))
+		_, _ = w.Write([]byte(`{"status": "ok"}`))
 	})
 
 	cfg := client.DefaultConfig(redisClient, "TestApp/1.0.0")
