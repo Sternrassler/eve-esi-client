@@ -100,3 +100,16 @@ func AddConditionalHeaders(req *http.Request, entry *CacheEntry) {
 		req.Header.Set("If-Modified-Since", entry.LastModified.Format(http.TimeFormat))
 	}
 }
+
+// EntryToResponse converts a cache entry back to an HTTP response.
+func EntryToResponse(entry *CacheEntry) *http.Response {
+	if entry == nil {
+		return nil
+	}
+
+	return &http.Response{
+		StatusCode: entry.StatusCode,
+		Header:     entry.Headers.Clone(),
+		Body:       io.NopCloser(bytes.NewReader(entry.Data)),
+	}
+}
