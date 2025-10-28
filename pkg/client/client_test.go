@@ -243,7 +243,7 @@ func TestDo_UserAgentSet(t *testing.T) {
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"test": "data"}`))
+		_, _ = w.Write([]byte(`{"test": "data"}`))
 	}))
 	defer server.Close()
 
@@ -304,7 +304,7 @@ func TestDo_CacheHit(t *testing.T) {
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.Header().Set("ETag", `"abc123"`)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"test": "data"}`))
+		_, _ = w.Write([]byte(`{"test": "data"}`))
 	}))
 	defer server.Close()
 
@@ -362,7 +362,7 @@ func TestDo_Handle304NotModified(t *testing.T) {
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.Header().Set("ETag", `"abc123"`)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"test": "data"}`))
+		_, _ = w.Write([]byte(`{"test": "data"}`))
 	}))
 	defer server.Close()
 
@@ -440,12 +440,14 @@ func TestDo_ErrorClassification(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Expected no error for client error, got %v", err)
 				}
-				if resp == nil {
+				if resp != nil {
+					statusCode := resp.StatusCode
+					resp.Body.Close()
+					if statusCode != tt.statusCode {
+						t.Errorf("Expected status %d, got %d", tt.statusCode, statusCode)
+					}
+				} else {
 					t.Fatal("Expected response for client error, got nil")
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode != tt.statusCode {
-					t.Errorf("Expected status %d, got %d", tt.statusCode, resp.StatusCode)
 				}
 				if callCount != 1 {
 					t.Errorf("Expected 1 call for client error, got %d", callCount)
@@ -517,7 +519,7 @@ func TestGet(t *testing.T) {
 		w.Header().Set("X-ESI-Error-Limit-Reset", "60")
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"test": "data"}`))
+		_, _ = w.Write([]byte(`{"test": "data"}`))
 	}))
 	defer server.Close()
 
@@ -575,7 +577,7 @@ func TestDo_RetryOnServerError(t *testing.T) {
 		// Succeed on third attempt
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"success": true}`))
+		_, _ = w.Write([]byte(`{"success": true}`))
 	}))
 	defer server.Close()
 
@@ -656,7 +658,7 @@ func TestDo_RetryOnRateLimit(t *testing.T) {
 		// Succeed on second attempt
 		w.Header().Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"success": true}`))
+		_, _ = w.Write([]byte(`{"success": true}`))
 	}))
 	defer server.Close()
 

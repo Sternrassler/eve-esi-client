@@ -249,7 +249,7 @@ func TestRetryWithBackoff_ExponentialBackoff(t *testing.T) {
 		return errors.New("error")
 	}
 
-	retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassServer })
+	_ = retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassServer })
 
 	if len(timestamps) != 3 {
 		t.Fatalf("Expected 3 timestamps, got %d", len(timestamps))
@@ -286,7 +286,7 @@ func TestRetryWithBackoff_RateLimitLongerBackoff(t *testing.T) {
 		return errors.New("rate limit error")
 	}
 
-	retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassRateLimit })
+	_ = retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassRateLimit })
 
 	if len(timestamps) != 3 {
 		t.Fatalf("Expected 3 timestamps, got %d", len(timestamps))
@@ -316,7 +316,7 @@ func TestRetryWithBackoff_Jitter(t *testing.T) {
 			return nil // Succeed on second attempt
 		}
 
-		retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassServer })
+		_ = retryWithBackoff(ctx, fn, func(error) ErrorClass { return ErrorClassServer })
 
 		if len(timestamps) >= 2 {
 			delays = append(delays, timestamps[1].Sub(timestamps[0]))
