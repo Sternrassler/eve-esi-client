@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -364,6 +365,43 @@ func (c *Client) Get(ctx context.Context, endpoint string) (*http.Response, erro
 	}
 
 	return c.Do(req)
+}
+
+// FetchPage implements pagination.PageFetcher interface for batch fetching
+// Returns the response body data and total page count from X-Pages header
+func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([]byte, int, error) {
+	// Add page parameter
+	fullEndpoint := fmt.Sprintf("%s?page=%d", endpoint, pageNum)
+
+	resp, err := c.Get(ctx, fullEndpoint)
+	if err != nil {
+		return nil, 0, fmt.Errorf("GET request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check status
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	// Parse X-Pages header
+	totalPages := 1
+	if xPages := resp.Header.Get("X-Pages"); xPages != "" {
+		if _, err := fmt.Sscanf(xPages, "%d", &totalPages); err != nil {
+			c.logger.Warn().
+				Str("x_pages", xPages).
+				Err(err).
+				Msg("Failed to parse X-Pages header")
+		}
+	}
+
+	// Read body
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return data, totalPages, nil
 }
 
 // Close closes the client and releases resources.
