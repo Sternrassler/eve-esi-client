@@ -28,5 +28,17 @@ if git diff --cached --name-only | xargs grep -HnE "(password|secret|api[_-]?key
     # Nicht blockieren, nur Warnung
 fi
 
+# 5. Go vet
+echo "[pre-commit] Running go vet..."
+go vet ./... || { echo "[pre-commit] ❌ go vet fehlgeschlagen"; exit 1; }
+
+# 6. golangci-lint (nur geänderte Files, schnell)
+if command -v golangci-lint &>/dev/null; then
+    echo "[pre-commit] Running golangci-lint..."
+    golangci-lint run --new-from-rev=HEAD~1 --timeout=3m || { echo "[pre-commit] ❌ golangci-lint fehlgeschlagen"; exit 1; }
+else
+    echo "[pre-commit] ⚠️  golangci-lint nicht gefunden, übersprungen"
+fi
+
 echo "[pre-commit] ✅ Pre-Commit Checks erfolgreich"
 exit 0
