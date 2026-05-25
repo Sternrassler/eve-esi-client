@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -39,8 +41,8 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 		CachedAt:   time.Now(),
 	}
 
-	// Parse Expires header (MUST respect per ESI documentation)
-	entry.Expires = parseExpires(resp.Header)
+	// Cache-Control hat Vorrang vor Expires (no-store/no-cache → nicht cachen; max-age → TTL).
+	entry.Expires = expiryFromHeaders(resp.Header)
 
 	// Parse Last-Modified header
 	if lastModStr := resp.Header.Get("Last-Modified"); lastModStr != "" {
@@ -50,6 +52,28 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 	}
 
 	return entry, nil
+}
+
+// expiryFromHeaders bestimmt die Ablaufzeit aus Cache-Control (Vorrang) oder Expires.
+func expiryFromHeaders(headers http.Header) time.Time {
+	cc := strings.ToLower(headers.Get("Cache-Control"))
+	if cc != "" {
+		if strings.Contains(cc, "no-store") || strings.Contains(cc, "no-cache") {
+			return time.Now() // TTL 0 → wird nicht gecacht
+		}
+		for _, part := range strings.Split(cc, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "max-age=") {
+				if secs, err := strconv.Atoi(strings.TrimPrefix(part, "max-age=")); err == nil {
+					if secs <= 0 {
+						return time.Now()
+					}
+					return time.Now().Add(time.Duration(secs) * time.Second)
+				}
+			}
+		}
+	}
+	return parseExpires(headers)
 }
 
 // parseExpires parses the Expires header from HTTP headers.
