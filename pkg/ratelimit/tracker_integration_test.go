@@ -82,7 +82,7 @@ func TestTracker_Integration_GetState(t *testing.T) {
 	headers.Set("X-ESI-Error-Limit-Remain", "75")
 	headers.Set("X-ESI-Error-Limit-Reset", "120")
 
-	if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+	if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 		t.Fatalf("UpdateFromHeaders() error = %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestTracker_Integration_UpdateFromHeaders(t *testing.T) {
 			headers.Set("X-ESI-Error-Limit-Remain", tt.remainHeader)
 			headers.Set("X-ESI-Error-Limit-Reset", tt.resetHeader)
 
-			if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+			if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 				t.Fatalf("UpdateFromHeaders() error = %v", err)
 			}
 
@@ -186,7 +186,7 @@ func TestTracker_Integration_ShouldAllowRequest_Critical(t *testing.T) {
 	headers.Set("X-ESI-Error-Limit-Remain", "3")
 	headers.Set("X-ESI-Error-Limit-Reset", "60")
 
-	if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+	if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 		t.Fatalf("UpdateFromHeaders() error = %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestTracker_Integration_ShouldAllowRequest_Warning(t *testing.T) {
 	headers.Set("X-ESI-Error-Limit-Remain", "15")
 	headers.Set("X-ESI-Error-Limit-Reset", "60")
 
-	if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+	if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 		t.Fatalf("UpdateFromHeaders() error = %v", err)
 	}
 
@@ -250,7 +250,7 @@ func TestTracker_Integration_ShouldAllowRequest_Healthy(t *testing.T) {
 	headers.Set("X-ESI-Error-Limit-Remain", "90")
 	headers.Set("X-ESI-Error-Limit-Reset", "60")
 
-	if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+	if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 		t.Fatalf("UpdateFromHeaders() error = %v", err)
 	}
 
@@ -286,7 +286,7 @@ func TestTracker_Integration_StateReset(t *testing.T) {
 	headers.Set("X-ESI-Error-Limit-Remain", "3")
 	headers.Set("X-ESI-Error-Limit-Reset", "2") // Reset in 2 seconds
 
-	if err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
+	if _, err := tracker.UpdateFromHeaders(ctx, headers); err != nil {
 		t.Fatalf("UpdateFromHeaders() error = %v", err)
 	}
 

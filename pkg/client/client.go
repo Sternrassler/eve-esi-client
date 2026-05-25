@@ -236,9 +236,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			return reqErr
 		}
 
-		// Update Rate Limit from headers
-		if err := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header); err != nil {
-			c.logger.Warn().Err(err).Msg("Failed to update rate limit from headers")
+		// Update Rate Limit from headers (authoritative when present)
+		headerApplied, uerr := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header)
+		if uerr != nil {
+			c.logger.Warn().Err(uerr).Msg("Failed to update rate limit from headers")
 		}
 
 		// Handle 304 Not Modified (not an error, return success)
@@ -249,6 +250,13 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		// Handle HTTP errors
 		if resp.StatusCode >= 400 {
 			errClass = c.classifyError(resp, nil)
+			// Optimistischer lokaler Decrement nur, wenn ESI keinen Header lieferte
+			// (sonst ist der Header bereits autoritativ; DECR würde doppelt zählen).
+			if !headerApplied {
+				if rerr := c.rateLimiter.RecordError(ctx); rerr != nil {
+					c.logger.Warn().Err(rerr).Msg("Failed to record error in rate limiter")
+				}
+			}
 			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
 			esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
 

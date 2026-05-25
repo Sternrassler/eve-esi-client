@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
 
@@ -143,7 +144,7 @@ func TestUpdateFromHeaders_InvalidHeaders(t *testing.T) {
 				headers.Set("X-ESI-Error-Limit-Reset", tt.resetHeader)
 			}
 
-			err := tracker.UpdateFromHeaders(context.Background(), headers)
+			_, err := tracker.UpdateFromHeaders(context.Background(), headers)
 
 			if tt.shouldError && err == nil {
 				t.Error("Expected error but got nil")
@@ -214,6 +215,66 @@ func TestShouldAllowRequest_Logic(t *testing.T) {
 				t.Errorf("NeedsThrottling() = %v, want %v (errors=%d)", shouldThrottle, tt.expectThrottle, tt.errorsRemaining)
 			}
 		})
+	}
+}
+
+// setupTestRedis liefert einen Redis-Client oder skippt, wenn keiner läuft.
+func setupTestRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	c := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	ctx := context.Background()
+	if err := c.Ping(ctx).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	c.Del(ctx, RedisKeyErrorsRemaining, RedisKeyResetTimestamp, RedisKeyLastUpdate)
+	return c
+}
+
+func TestRecordError_DecrementsWhenKeyExists(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer rc.Close()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+	rc.Set(ctx, RedisKeyErrorsRemaining, 10, 0)
+	if err := tr.RecordError(ctx); err != nil {
+		t.Fatalf("RecordError: %v", err)
+	}
+	got, _ := rc.Get(ctx, RedisKeyErrorsRemaining).Int()
+	if got != 9 {
+		t.Errorf("errors_remaining = %d, want 9", got)
+	}
+}
+
+func TestRecordError_DoesNotCreateKeyWhenAbsent(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer rc.Close()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+	if err := tr.RecordError(ctx); err != nil {
+		t.Fatalf("RecordError: %v", err)
+	}
+	st, _ := tr.GetState(ctx)
+	if st.ErrorsRemaining != 100 {
+		t.Errorf("ErrorsRemaining = %d, want 100 (Default; Key darf nicht angelegt werden)", st.ErrorsRemaining)
+	}
+}
+
+func TestShouldAllowRequest_ThrottleRespectsContext(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer rc.Close()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+	rc.Set(ctx, RedisKeyErrorsRemaining, 10, 0) // warning state (5<=10<20) → würde throtteln
+	rc.Set(ctx, RedisKeyResetTimestamp, time.Now().Add(60*time.Second).Unix(), 0)
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	start := time.Now()
+	allowed, err := tr.ShouldAllowRequest(cctx)
+	if time.Since(start) > 200*time.Millisecond {
+		t.Errorf("Throttle schlief trotz cancel ~%v", time.Since(start))
+	}
+	if allowed || err == nil {
+		t.Errorf("erwartet allowed=false,err!=nil; got %v,%v", allowed, err)
 	}
 }
 

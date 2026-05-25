@@ -37,6 +37,15 @@ var (
 	})
 )
 
+// decrIfExists dekrementiert errors_remaining nur, wenn der Key existiert
+// (verhindert, dass ein fehlender Key fälschlich auf -1 gesetzt wird).
+var decrIfExists = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return redis.call('DECR', KEYS[1])
+end
+return -1
+`)
+
 // Tracker monitors ESI error rate limits and gates requests.
 type Tracker struct {
 	redis  *redis.Client
@@ -49,6 +58,13 @@ func NewTracker(redisClient *redis.Client, logger zerolog.Logger) *Tracker {
 		redis:  redisClient,
 		logger: logger,
 	}
+}
+
+// RecordError dekrementiert das Error-Budget atomar um 1, sobald ein Fehler
+// beobachtet wird, für den ESI KEIN Error-Limit-Header lieferte. Nebenläufige
+// Requests sehen den niedrigeren Stand sofort (schließt das TOCTOU-Fenster).
+func (t *Tracker) RecordError(ctx context.Context) error {
+	return decrIfExists.Run(ctx, t.redis, []string{RedisKeyErrorsRemaining}).Err()
 }
 
 // GetState retrieves the current rate limit state from Redis.
@@ -99,28 +115,30 @@ func (t *Tracker) GetState(ctx context.Context) (*RateLimitState, error) {
 }
 
 // UpdateFromHeaders parses ESI rate limit headers and updates Redis state.
-func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) error {
+// Returns (true, nil) when a header was successfully applied, (false, nil) when
+// no header was present, or (false, err) on parse/storage errors.
+func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) (bool, error) {
 	// Parse X-ESI-Error-Limit-Remain header
 	remainStr := headers.Get("X-ESI-Error-Limit-Remain")
 	if remainStr == "" {
 		// Header not present - this is OK for non-ESI responses or some endpoints
-		return nil
+		return false, nil
 	}
 
 	remain, err := strconv.Atoi(remainStr)
 	if err != nil {
-		return fmt.Errorf("parse X-ESI-Error-Limit-Remain header: %w", err)
+		return false, fmt.Errorf("parse X-ESI-Error-Limit-Remain header: %w", err)
 	}
 
 	// Parse X-ESI-Error-Limit-Reset header
 	resetStr := headers.Get("X-ESI-Error-Limit-Reset")
 	if resetStr == "" {
-		return fmt.Errorf("X-ESI-Error-Limit-Reset header missing")
+		return false, fmt.Errorf("X-ESI-Error-Limit-Reset header missing")
 	}
 
 	resetSeconds, err := strconv.Atoi(resetStr)
 	if err != nil {
-		return fmt.Errorf("parse X-ESI-Error-Limit-Reset header: %w", err)
+		return false, fmt.Errorf("parse X-ESI-Error-Limit-Reset header: %w", err)
 	}
 
 	// Get previous state to detect resets
@@ -151,13 +169,13 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) er
 
 	lastUpdateJSON, err := json.Marshal(state.LastUpdate)
 	if err != nil {
-		return fmt.Errorf("marshal last update: %w", err)
+		return false, fmt.Errorf("marshal last update: %w", err)
 	}
 	pipe.Set(ctx, RedisKeyLastUpdate, lastUpdateJSON, 0)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("store rate limit state in redis: %w", err)
+		return false, fmt.Errorf("store rate limit state in redis: %w", err)
 	}
 
 	// Update Prometheus metrics
@@ -179,7 +197,7 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) er
 		logEvent.Msg("ESI error limit state updated")
 	}
 
-	return nil
+	return true, nil
 }
 
 // ShouldAllowRequest checks if a request should be allowed based on current rate limit state.
@@ -211,7 +229,11 @@ func (t *Tracker) ShouldAllowRequest(ctx context.Context) (bool, error) {
 			Msg("ESI error limit warning - throttling request")
 
 		esiRateLimitThrottlesTotal.Inc()
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 
 	// Healthy: Allow request
