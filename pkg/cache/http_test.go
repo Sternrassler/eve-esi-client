@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -264,4 +265,36 @@ func TestAddConditionalHeaders_NilInputs(t *testing.T) {
 	// Should not panic with nil inputs
 	AddConditionalHeaders(nil, &CacheEntry{ETag: "test"})
 	AddConditionalHeaders(&http.Request{}, nil)
+}
+
+func respWith(headers map[string]string) *http.Response {
+	h := make(http.Header)
+	for k, v := range headers {
+		h.Set(k, v)
+	}
+	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("{}"))}
+}
+
+func TestResponseToEntry_CacheControlNoStore(t *testing.T) {
+	entry, err := ResponseToEntry(respWith(map[string]string{"Cache-Control": "no-store"}))
+	if err != nil {
+		t.Fatalf("ResponseToEntry: %v", err)
+	}
+	if entry.TTL() > 0 {
+		t.Errorf("no-store muss TTL 0 ergeben, got %v", entry.TTL())
+	}
+}
+
+func TestResponseToEntry_CacheControlMaxAgeOverridesExpires(t *testing.T) {
+	entry, err := ResponseToEntry(respWith(map[string]string{
+		"Cache-Control": "max-age=30",
+		"Expires":       time.Now().Add(1 * time.Hour).UTC().Format(http.TimeFormat),
+	}))
+	if err != nil {
+		t.Fatalf("ResponseToEntry: %v", err)
+	}
+	ttl := entry.TTL()
+	if ttl < 25*time.Second || ttl > 31*time.Second {
+		t.Errorf("max-age=30 muss TTL ~30s ergeben, got %v", ttl)
+	}
 }

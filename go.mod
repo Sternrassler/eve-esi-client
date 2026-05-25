@@ -1,14 +1,13 @@
 module github.com/Sternrassler/eve-esi-client
 
-go 1.24.0
-
-toolchain go1.24.7
+go 1.25.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/rs/zerolog v1.34.0
 	github.com/testcontainers/testcontainers-go v0.39.0
+	golang.org/x/time v0.15.0
 )
 
 require (

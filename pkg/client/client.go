@@ -3,10 +3,16 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/cache"
@@ -16,9 +22,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/time/rate"
 )
 
 // Prometheus metrics for ESI client operations.
+// NOTE: These metrics are process-global (promauto/DefaultRegisterer).
+// Only one Client instance per process is supported — a second instance would
+// panic on metric re-registration. Acceptable for the single-process deployment.
 var (
 	esiRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "esi_requests_total",
@@ -78,6 +88,8 @@ type Client struct {
 	cache       *cache.Manager
 	config      Config
 	logger      zerolog.Logger
+	limiter     *rate.Limiter  // req/s Token-Bucket (in-memory)
+	sem         chan struct{}   // Concurrency-Semaphore (in-memory)
 }
 
 // Config holds the client configuration.
@@ -138,6 +150,14 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("error_threshold must be >= 5 (got %d)", cfg.ErrorThreshold)
 	}
 
+	if cfg.RateLimit <= 0 {
+		return nil, fmt.Errorf("rate_limit must be > 0 (got %d)", cfg.RateLimit)
+	}
+
+	if cfg.MaxConcurrency <= 0 {
+		return nil, fmt.Errorf("max_concurrency must be > 0 (got %d)", cfg.MaxConcurrency)
+	}
+
 	// Initialize logger
 	logger := log.With().Str("component", "esi-client").Logger()
 
@@ -156,6 +176,8 @@ func New(cfg Config) (*Client, error) {
 		cache:       cacheManager,
 		config:      cfg,
 		logger:      logger,
+		limiter:     rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateLimit),
+		sem:         make(chan struct{}, cfg.MaxConcurrency),
 	}, nil
 }
 
@@ -170,6 +192,19 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	defer func() {
 		esiRequestDuration.WithLabelValues(endpoint).Observe(time.Since(startTime).Seconds())
 	}()
+
+	// Gate 0a: req/s-Limiter (in-memory Token-Bucket)
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	// Gate 0b: Concurrency-Semaphore (in-memory)
+	select {
+	case c.sem <- struct{}{}:
+		defer func() { <-c.sem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	// Step 1: Check Rate Limit
 	allowed, err := c.rateLimiter.ShouldAllowRequest(ctx)
@@ -189,6 +224,11 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	cacheKey := cache.CacheKey{
 		Endpoint:    endpoint,
 		QueryParams: req.URL.Query(),
+	}
+	// Authentifizierte Requests: Hash des Authorization-Headers in den Key (kein Roh-Token).
+	if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+		sum := sha256.Sum256([]byte(authHeader))
+		cacheKey.Auth = hex.EncodeToString(sum[:])[:16]
 	}
 
 	cachedEntry, err := c.cache.Get(ctx, cacheKey)
@@ -220,8 +260,29 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	var lastErr error
 	var errClass ErrorClass
 
+	// E4: Body über Retries reproduzierbar machen. Falls GetBody fehlt, aber ein Body
+	// vorhanden ist, einmalig puffern und GetBody setzen.
+	if req.Body != nil && req.GetBody == nil {
+		bodyBytes, berr := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if berr != nil {
+			return nil, fmt.Errorf("buffer request body: %w", berr)
+		}
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	}
+
 	// Wrap the HTTP request in retry logic
 	retryErr := retryWithBackoff(ctx, func() error {
+		// Body vor jedem Versuch zurücksetzen (sonst nach Versuch 1 verbraucht)
+		if req.GetBody != nil {
+			if body, gerr := req.GetBody(); gerr == nil {
+				req.Body = body
+			}
+		}
+
 		// Execute the HTTP request
 		var reqErr error
 		resp, reqErr = c.httpClient.Do(req)
@@ -236,9 +297,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			return reqErr
 		}
 
-		// Update Rate Limit from headers
-		if err := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header); err != nil {
-			c.logger.Warn().Err(err).Msg("Failed to update rate limit from headers")
+		// Update Rate Limit from headers (authoritative when present)
+		headerApplied, uerr := c.rateLimiter.UpdateFromHeaders(ctx, resp.Header)
+		if uerr != nil {
+			c.logger.Warn().Err(uerr).Msg("Failed to update rate limit from headers")
 		}
 
 		// Handle 304 Not Modified (not an error, return success)
@@ -249,6 +311,13 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		// Handle HTTP errors
 		if resp.StatusCode >= 400 {
 			errClass = c.classifyError(resp, nil)
+			// Optimistischer lokaler Decrement nur, wenn ESI keinen Header lieferte
+			// (sonst ist der Header bereits autoritativ; DECR würde doppelt zählen).
+			if !headerApplied {
+				if rerr := c.rateLimiter.RecordError(ctx); rerr != nil {
+					c.logger.Warn().Err(rerr).Msg("Failed to record error in rate limiter")
+				}
+			}
 			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
 			esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
 
@@ -367,11 +436,28 @@ func (c *Client) Get(ctx context.Context, endpoint string) (*http.Response, erro
 	return c.Do(req)
 }
 
+// buildPagedEndpoint hängt den page-Query-Parameter robust an, ohne eine
+// bestehende Query zu zerstören.
+func buildPagedEndpoint(endpoint string, pageNum int) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		return fmt.Sprintf("%s%spage=%d", endpoint, sep, pageNum)
+	}
+	q := u.Query()
+	q.Set("page", strconv.Itoa(pageNum))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // FetchPage implements pagination.PageFetcher interface for batch fetching
 // Returns the response body data and total page count from X-Pages header
 func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([]byte, int, error) {
 	// Add page parameter
-	fullEndpoint := fmt.Sprintf("%s?page=%d", endpoint, pageNum)
+	fullEndpoint := buildPagedEndpoint(endpoint, pageNum)
 
 	resp, err := c.Get(ctx, fullEndpoint)
 	if err != nil {
@@ -387,7 +473,9 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	// Parse X-Pages header
 	totalPages := 1
 	if xPages := resp.Header.Get("X-Pages"); xPages != "" {
-		if _, err := fmt.Sscanf(xPages, "%d", &totalPages); err != nil {
+		if parsed, err := strconv.Atoi(xPages); err == nil {
+			totalPages = parsed
+		} else {
 			c.logger.Warn().
 				Str("x_pages", xPages).
 				Err(err).
@@ -404,9 +492,9 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	return data, totalPages, nil
 }
 
-// Close closes the client and releases resources.
+// Close is a no-op: the Redis client is injected and owned by the caller,
+// so this client deliberately does not close it. Present for interface symmetry.
 func (c *Client) Close() error {
-	// TODO: Cleanup resources
 	return nil
 }
 

@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +64,8 @@ func TestNew_Validation(t *testing.T) {
 				UserAgent:      "TestApp/1.0.0 (test@example.com)",
 				RespectExpires: true,
 				ErrorThreshold: 10,
+				RateLimit:      10,
+				MaxConcurrency: 5,
 			},
 			expectError: false,
 		},
@@ -724,5 +731,123 @@ func TestDo_RetryExhausted(t *testing.T) {
 	// Should attempt 3 times (max attempts)
 	if attemptCount != 3 {
 		t.Errorf("Expected 3 attempts, got %d", attemptCount)
+	}
+}
+
+func TestNew_RejectsInvalidLimits(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	base := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	bad := base
+	bad.RateLimit = 0
+	if _, err := New(bad); err == nil {
+		t.Error("New muss RateLimit<=0 ablehnen")
+	}
+	bad = base
+	bad.MaxConcurrency = 0
+	if _, err := New(bad); err == nil {
+		t.Error("New muss MaxConcurrency<=0 ablehnen")
+	}
+}
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDo_RetryResendsBody(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	cfg := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var bodies []string
+	var attempt int
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		attempt++
+		if attempt == 1 {
+			return &http.Response{StatusCode: 500, Status: "500", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})})
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", "https://esi.evetech.net/test/", strings.NewReader("payload-123"))
+	_, _ = c.Do(req)
+	if len(bodies) < 2 {
+		t.Fatalf("erwartet >=2 Versuche, got %d", len(bodies))
+	}
+	for i, b := range bodies {
+		if b != "payload-123" {
+			t.Errorf("Versuch %d: Body = %q, want \"payload-123\"", i+1, b)
+		}
+	}
+}
+
+func TestBuildPagedEndpoint(t *testing.T) {
+	cases := []struct {
+		in   string
+		page int
+	}{
+		{"/v1/markets/10000002/orders/", 2},
+		{"/v1/markets/10000002/orders/?order_type=all", 3},
+	}
+	for _, c := range cases {
+		got := buildPagedEndpoint(c.in, c.page)
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("ungültige URL %q: %v", got, err)
+		}
+		if u.Query().Get("page") != fmt.Sprint(c.page) {
+			t.Errorf("buildPagedEndpoint(%q,%d) page-Param falsch: %q", c.in, c.page, got)
+		}
+		if c.in == "/v1/markets/10000002/orders/?order_type=all" && u.Query().Get("order_type") != "all" {
+			t.Errorf("bestehender Query-Param verloren: %q", got)
+		}
+	}
+}
+
+func TestDo_RespectsMaxConcurrency(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	cfg := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	cfg.MaxConcurrency = 2
+	cfg.RateLimit = 1000 // hoch, damit der req/s-Limiter nicht limitiert
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var inFlight, maxInFlight int32
+	release := make(chan struct{})
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			m := atomic.LoadInt32(&maxInFlight)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxInFlight, m, cur) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})})
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = c.Get(context.Background(), "/test/") }()
+	}
+	time.Sleep(200 * time.Millisecond)
+	got := atomic.LoadInt32(&maxInFlight)
+	close(release)
+	wg.Wait()
+	if got > 2 {
+		t.Errorf("max gleichzeitig in-flight = %d, want <= 2", got)
 	}
 }
