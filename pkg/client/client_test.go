@@ -754,6 +754,39 @@ type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestDo_RetryResendsBody(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	cfg := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var bodies []string
+	var attempt int
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		attempt++
+		if attempt == 1 {
+			return &http.Response{StatusCode: 500, Status: "500", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})})
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", "https://esi.evetech.net/test/", strings.NewReader("payload-123"))
+	_, _ = c.Do(req)
+	if len(bodies) < 2 {
+		t.Fatalf("erwartet >=2 Versuche, got %d", len(bodies))
+	}
+	for i, b := range bodies {
+		if b != "payload-123" {
+			t.Errorf("Versuch %d: Body = %q, want \"payload-123\"", i+1, b)
+		}
+	}
+}
+
 func TestDo_RespectsMaxConcurrency(t *testing.T) {
 	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	if err := rc.Ping(context.Background()).Err(); err != nil {

@@ -3,6 +3,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -253,8 +254,29 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	var lastErr error
 	var errClass ErrorClass
 
+	// E4: Body über Retries reproduzierbar machen. Falls GetBody fehlt, aber ein Body
+	// vorhanden ist, einmalig puffern und GetBody setzen.
+	if req.Body != nil && req.GetBody == nil {
+		bodyBytes, berr := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if berr != nil {
+			return nil, fmt.Errorf("buffer request body: %w", berr)
+		}
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	}
+
 	// Wrap the HTTP request in retry logic
 	retryErr := retryWithBackoff(ctx, func() error {
+		// Body vor jedem Versuch zurücksetzen (sonst nach Versuch 1 verbraucht)
+		if req.GetBody != nil {
+			if body, gerr := req.GetBody(); gerr == nil {
+				req.Body = body
+			}
+		}
+
 		// Execute the HTTP request
 		var reqErr error
 		resp, reqErr = c.httpClient.Do(req)
