@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/time/rate"
 )
 
 // Prometheus metrics for ESI client operations.
@@ -78,6 +79,8 @@ type Client struct {
 	cache       *cache.Manager
 	config      Config
 	logger      zerolog.Logger
+	limiter     *rate.Limiter  // req/s Token-Bucket (in-memory)
+	sem         chan struct{}   // Concurrency-Semaphore (in-memory)
 }
 
 // Config holds the client configuration.
@@ -138,6 +141,14 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("error_threshold must be >= 5 (got %d)", cfg.ErrorThreshold)
 	}
 
+	if cfg.RateLimit <= 0 {
+		return nil, fmt.Errorf("rate_limit must be > 0 (got %d)", cfg.RateLimit)
+	}
+
+	if cfg.MaxConcurrency <= 0 {
+		return nil, fmt.Errorf("max_concurrency must be > 0 (got %d)", cfg.MaxConcurrency)
+	}
+
 	// Initialize logger
 	logger := log.With().Str("component", "esi-client").Logger()
 
@@ -156,6 +167,8 @@ func New(cfg Config) (*Client, error) {
 		cache:       cacheManager,
 		config:      cfg,
 		logger:      logger,
+		limiter:     rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateLimit),
+		sem:         make(chan struct{}, cfg.MaxConcurrency),
 	}, nil
 }
 
@@ -170,6 +183,19 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	defer func() {
 		esiRequestDuration.WithLabelValues(endpoint).Observe(time.Since(startTime).Seconds())
 	}()
+
+	// Gate 0a: req/s-Limiter (in-memory Token-Bucket)
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter wait: %w", err)
+	}
+
+	// Gate 0b: Concurrency-Semaphore (in-memory)
+	select {
+	case c.sem <- struct{}{}:
+		defer func() { <-c.sem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	// Step 1: Check Rate Limit
 	allowed, err := c.rateLimiter.ShouldAllowRequest(ctx)

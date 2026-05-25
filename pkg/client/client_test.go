@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +62,8 @@ func TestNew_Validation(t *testing.T) {
 				UserAgent:      "TestApp/1.0.0 (test@example.com)",
 				RespectExpires: true,
 				ErrorThreshold: 10,
+				RateLimit:      10,
+				MaxConcurrency: 5,
 			},
 			expectError: false,
 		},
@@ -724,5 +729,67 @@ func TestDo_RetryExhausted(t *testing.T) {
 	// Should attempt 3 times (max attempts)
 	if attemptCount != 3 {
 		t.Errorf("Expected 3 attempts, got %d", attemptCount)
+	}
+}
+
+func TestNew_RejectsInvalidLimits(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	base := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	bad := base
+	bad.RateLimit = 0
+	if _, err := New(bad); err == nil {
+		t.Error("New muss RateLimit<=0 ablehnen")
+	}
+	bad = base
+	bad.MaxConcurrency = 0
+	if _, err := New(bad); err == nil {
+		t.Error("New muss MaxConcurrency<=0 ablehnen")
+	}
+}
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDo_RespectsMaxConcurrency(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available: %v", err)
+	}
+	cfg := DefaultConfig(rc, "Test/1.0 (t@e.x)")
+	cfg.MaxConcurrency = 2
+	cfg.RateLimit = 1000 // hoch, damit der req/s-Limiter nicht limitiert
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var inFlight, maxInFlight int32
+	release := make(chan struct{})
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			m := atomic.LoadInt32(&maxInFlight)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxInFlight, m, cur) {
+				break
+			}
+		}
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})})
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, _ = c.Get(context.Background(), "/test/") }()
+	}
+	time.Sleep(200 * time.Millisecond)
+	got := atomic.LoadInt32(&maxInFlight)
+	close(release)
+	wg.Wait()
+	if got > 2 {
+		t.Errorf("max gleichzeitig in-flight = %d, want <= 2", got)
 	}
 }
