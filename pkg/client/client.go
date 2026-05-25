@@ -4,6 +4,8 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -215,6 +217,11 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	cacheKey := cache.CacheKey{
 		Endpoint:    endpoint,
 		QueryParams: req.URL.Query(),
+	}
+	// Authentifizierte Requests: Hash des Authorization-Headers in den Key (kein Roh-Token).
+	if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+		sum := sha256.Sum256([]byte(authHeader))
+		cacheKey.Auth = hex.EncodeToString(sum[:])[:16]
 	}
 
 	cachedEntry, err := c.cache.Get(ctx, cacheKey)

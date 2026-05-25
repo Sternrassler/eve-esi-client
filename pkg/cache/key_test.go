@@ -92,6 +92,33 @@ func TestCacheKey_String(t *testing.T) {
 	}
 }
 
+func TestCacheKey_AuthDistinguishesKeys(t *testing.T) {
+	base := CacheKey{Endpoint: "/v1/char/assets/", QueryParams: url.Values{}}
+	noAuth := base.String()
+	a := base
+	a.Auth = "hashAAA"
+	b := base
+	b.Auth = "hashBBB"
+	if a.String() == b.String() {
+		t.Error("verschiedene Auth-Hashes müssen verschiedene Keys ergeben")
+	}
+	if a.String() == noAuth {
+		t.Error("Auth-Key muss sich vom No-Auth-Key unterscheiden")
+	}
+	a2 := base
+	a2.Auth = "hashAAA"
+	if a.String() != a2.String() {
+		t.Error("gleicher Auth-Hash muss gleichen Key ergeben")
+	}
+}
+
+func TestCacheKey_NoAuthUnchanged(t *testing.T) {
+	k := CacheKey{Endpoint: "/v1/markets/10000002/orders/", QueryParams: url.Values{}}
+	if got := k.String(); got != "esi:v1/markets/10000002/orders" {
+		t.Errorf("No-Auth-Key = %q, want unverändertes Format ohne auth", got)
+	}
+}
+
 // TestCacheKey_Determinism ensures same input always produces same key
 func TestCacheKey_Determinism(t *testing.T) {
 	key := CacheKey{

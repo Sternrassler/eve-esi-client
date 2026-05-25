@@ -20,6 +20,10 @@ type CacheKey struct {
 
 	// CharacterID is the character ID for authenticated endpoints (0 for public)
 	CharacterID int64
+
+	// Auth is a hash of the Authorization header for authenticated requests
+	// (empty for public). Prevents cross-character cache poisoning. Never the raw token.
+	Auth string
 }
 
 // String generates a deterministic cache key string.
@@ -66,6 +70,11 @@ func (k CacheKey) String() string {
 	// Add character ID if authenticated
 	if k.CharacterID > 0 {
 		parts = append(parts, fmt.Sprintf("char=%d", k.CharacterID))
+	}
+
+	// Add auth hash if present (authenticated request)
+	if k.Auth != "" {
+		parts = append(parts, fmt.Sprintf("auth=%s", k.Auth))
 	}
 
 	return strings.Join(parts, ":")
