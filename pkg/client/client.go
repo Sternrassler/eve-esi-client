@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/cache"
@@ -430,11 +433,28 @@ func (c *Client) Get(ctx context.Context, endpoint string) (*http.Response, erro
 	return c.Do(req)
 }
 
+// buildPagedEndpoint hängt den page-Query-Parameter robust an, ohne eine
+// bestehende Query zu zerstören.
+func buildPagedEndpoint(endpoint string, pageNum int) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		return fmt.Sprintf("%s%spage=%d", endpoint, sep, pageNum)
+	}
+	q := u.Query()
+	q.Set("page", strconv.Itoa(pageNum))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // FetchPage implements pagination.PageFetcher interface for batch fetching
 // Returns the response body data and total page count from X-Pages header
 func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([]byte, int, error) {
 	// Add page parameter
-	fullEndpoint := fmt.Sprintf("%s?page=%d", endpoint, pageNum)
+	fullEndpoint := buildPagedEndpoint(endpoint, pageNum)
 
 	resp, err := c.Get(ctx, fullEndpoint)
 	if err != nil {
@@ -450,7 +470,9 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	// Parse X-Pages header
 	totalPages := 1
 	if xPages := resp.Header.Get("X-Pages"); xPages != "" {
-		if _, err := fmt.Sscanf(xPages, "%d", &totalPages); err != nil {
+		if parsed, err := strconv.Atoi(xPages); err == nil {
+			totalPages = parsed
+		} else {
 			c.logger.Warn().
 				Str("x_pages", xPages).
 				Err(err).

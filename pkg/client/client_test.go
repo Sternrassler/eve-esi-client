@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -783,6 +785,29 @@ func TestDo_RetryResendsBody(t *testing.T) {
 	for i, b := range bodies {
 		if b != "payload-123" {
 			t.Errorf("Versuch %d: Body = %q, want \"payload-123\"", i+1, b)
+		}
+	}
+}
+
+func TestBuildPagedEndpoint(t *testing.T) {
+	cases := []struct {
+		in   string
+		page int
+	}{
+		{"/v1/markets/10000002/orders/", 2},
+		{"/v1/markets/10000002/orders/?order_type=all", 3},
+	}
+	for _, c := range cases {
+		got := buildPagedEndpoint(c.in, c.page)
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("ungültige URL %q: %v", got, err)
+		}
+		if u.Query().Get("page") != fmt.Sprint(c.page) {
+			t.Errorf("buildPagedEndpoint(%q,%d) page-Param falsch: %q", c.in, c.page, got)
+		}
+		if c.in == "/v1/markets/10000002/orders/?order_type=all" && u.Query().Get("order_type") != "all" {
+			t.Errorf("bestehender Query-Param verloren: %q", got)
 		}
 	}
 }
