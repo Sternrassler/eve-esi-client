@@ -232,7 +232,7 @@ func setupTestRedis(t *testing.T) *redis.Client {
 
 func TestRecordError_DecrementsWhenKeyExists(t *testing.T) {
 	rc := setupTestRedis(t)
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	ctx := context.Background()
 	tr := NewTracker(rc, zerolog.Nop())
 	rc.Set(ctx, RedisKeyErrorsRemaining, 10, 0)
@@ -247,7 +247,7 @@ func TestRecordError_DecrementsWhenKeyExists(t *testing.T) {
 
 func TestRecordError_DoesNotCreateKeyWhenAbsent(t *testing.T) {
 	rc := setupTestRedis(t)
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	ctx := context.Background()
 	tr := NewTracker(rc, zerolog.Nop())
 	if err := tr.RecordError(ctx); err != nil {
@@ -261,7 +261,7 @@ func TestRecordError_DoesNotCreateKeyWhenAbsent(t *testing.T) {
 
 func TestShouldAllowRequest_ThrottleRespectsContext(t *testing.T) {
 	rc := setupTestRedis(t)
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	ctx := context.Background()
 	tr := NewTracker(rc, zerolog.Nop())
 	rc.Set(ctx, RedisKeyErrorsRemaining, 10, 0) // warning state (5<=10<20) → würde throtteln
