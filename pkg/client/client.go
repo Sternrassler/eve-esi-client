@@ -26,6 +26,9 @@ import (
 )
 
 // Prometheus metrics for ESI client operations.
+// NOTE: These metrics are process-global (promauto/DefaultRegisterer).
+// Only one Client instance per process is supported — a second instance would
+// panic on metric re-registration. Acceptable for the single-process deployment.
 var (
 	esiRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "esi_requests_total",
@@ -489,9 +492,9 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	return data, totalPages, nil
 }
 
-// Close closes the client and releases resources.
+// Close is a no-op: the Redis client is injected and owned by the caller,
+// so this client deliberately does not close it. Present for interface symmetry.
 func (c *Client) Close() error {
-	// TODO: Cleanup resources
 	return nil
 }
 
