@@ -10,10 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **Prometheus metrics feature** — `pkg/metrics`, the promauto instrumentation across `pkg/cache`, `pkg/client`, `pkg/ratelimit`, the `/metrics` endpoint, monitoring docs, and the `prometheus/client_golang` dependency. Observability now relies on structured logging.
 - **Architecture Decision Records** and their enforcement (pre-commit/CI ADR checks, `check-adr*` scripts, ADR policy in copilot-instructions).
+- **HTTP service-mode proxy** (`cmd/esi-proxy`) — removed entirely, including the Makefile `build`/`run`/`docker-*` targets and container-image references. This is now a library-only module; use `pkg/client` directly.
 
 ### Changed
 - README slimmed to a single Quick Start snippet; all other code moved to runnable `examples/`. Docs pruned to `configuration.md` + `troubleshooting.md`.
-- Roadmap claims aligned with the code: pagination (`pkg/pagination`) and the HTTP proxy (`cmd/esi-proxy`) are documented as experimental rather than "Phase 2".
+- Pagination (`pkg/pagination`) documented accurately: tested and usable standalone, not yet wired into the client's high-level API.
 
 ### Added
 - `examples/ratelimit-usage/` — standalone rate-limit tracker example.
@@ -21,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests for `pkg/pagination` (batch fetcher: single/multi-page, partial failure, config clamping, context cancellation).
 
 ### Fixed
-- `cmd/esi-proxy` now copies the upstream ESI response body (was a `TODO` stub).
 - CI builds on Go 1.25 and runs `golangci-lint` v2 (matching `.golangci.yml`); fixed all lint findings and `gofmt`.
 
 ## [0.4.0] - 2026-05-25
