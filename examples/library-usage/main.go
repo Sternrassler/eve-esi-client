@@ -36,12 +36,13 @@ func main() {
 		Password: getEnv("REDIS_PASSWORD", ""),
 		DB:       0,
 	})
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	// Test Redis connection
 	ctx := context.Background()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("❌ Failed to connect to Redis: %v", err)
+		log.Printf("❌ Failed to connect to Redis: %v", err)
+		return
 	}
 	fmt.Println("✅ Connected to Redis")
 
@@ -55,9 +56,10 @@ func main() {
 
 	esiClient, err := client.New(cfg)
 	if err != nil {
-		log.Fatalf("❌ Failed to create ESI client: %v", err)
+		log.Printf("❌ Failed to create ESI client: %v", err)
+		return
 	}
-	defer esiClient.Close()
+	defer func() { _ = esiClient.Close() }()
 	fmt.Println("✅ ESI client initialized")
 
 	// 3. Fetch market orders for The Forge region (Jita)
@@ -68,25 +70,29 @@ func main() {
 
 	resp, err := esiClient.Get(ctx, endpoint)
 	if err != nil {
-		log.Fatalf("❌ Request failed: %v", err)
+		log.Printf("❌ Request failed: %v", err)
+		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 4. Handle response
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		log.Fatalf("❌ ESI returned status %d: %s", resp.StatusCode, string(body))
+		log.Printf("❌ ESI returned status %d: %s", resp.StatusCode, string(body))
+		return
 	}
 
 	// 5. Parse JSON response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("❌ Failed to read response: %v", err)
+		log.Printf("❌ Failed to read response: %v", err)
+		return
 	}
 
 	var orders []MarketOrder
 	if err := json.Unmarshal(body, &orders); err != nil {
-		log.Fatalf("❌ Failed to parse orders: %v", err)
+		log.Printf("❌ Failed to parse orders: %v", err)
+		return
 	}
 
 	// 6. Display results
@@ -117,13 +123,15 @@ func main() {
 
 	resp2, err := esiClient.Get(ctx, endpoint)
 	if err != nil {
-		log.Fatalf("❌ Second request failed: %v", err)
+		log.Printf("❌ Second request failed: %v", err)
+		return
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
-	if resp2.StatusCode == 304 {
+	switch resp2.StatusCode {
+	case 304:
 		fmt.Println("✅ 304 Not Modified - cache is working!")
-	} else if resp2.StatusCode == 200 {
+	case 200:
 		fmt.Println("✅ 200 OK - data fetched (cache might be new)")
 	}
 
@@ -133,7 +141,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("❌ Expected error occurred: %v\n", err)
 	} else {
-		defer invalidResp.Body.Close()
+		defer func() { _ = invalidResp.Body.Close() }()
 		if invalidResp.StatusCode >= 400 {
 			fmt.Printf("⚠️  ESI returned error status: %d\n", invalidResp.StatusCode)
 		}

@@ -17,7 +17,7 @@ func main() {
 		Addr: "localhost:6379",
 		DB:   0,
 	})
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	// Ping Redis to check connection
 	ctx := context.Background()
@@ -57,7 +57,8 @@ func basicCacheExample(ctx context.Context, manager *cache.Manager) {
 
 	// Try to get from cache
 	entry, err := manager.Get(ctx, key)
-	if err == cache.ErrCacheMiss {
+	switch {
+	case err == cache.ErrCacheMiss:
 		fmt.Println("Cache miss - would fetch from ESI here")
 
 		// Simulate an ESI response
@@ -77,10 +78,10 @@ func basicCacheExample(ctx context.Context, manager *cache.Manager) {
 			return
 		}
 		fmt.Println("Stored in cache")
-	} else if err != nil {
+	case err != nil:
 		fmt.Printf("Cache error: %v\n", err)
 		return
-	} else {
+	default:
 		fmt.Println("Cache hit!")
 		fmt.Printf("Data: %s\n", string(entry.Data))
 		fmt.Printf("TTL: %v\n", entry.TTL())
@@ -162,88 +163,4 @@ func cacheKeyExample() {
 		CharacterID: 987654321,
 	}
 	fmt.Printf("Complex key: %s\n", key4.String())
-}
-
-// Example of handling an HTTP response
-func handleESIResponse(resp *http.Response, manager *cache.Manager, key cache.CacheKey) error {
-	ctx := context.Background()
-
-	// Handle 304 Not Modified
-	if resp.StatusCode == http.StatusNotModified {
-		fmt.Println("304 Not Modified - using cached data")
-
-		// Note: In production, metrics would be incremented by the Manager internally.
-		// This is shown here for demonstration purposes.
-		cache.NotModifiedResponses.Inc()
-
-		// Update TTL from new expires header
-		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {
-			if newExpires, err := http.ParseTime(expiresStr); err == nil {
-				manager.UpdateTTL(ctx, key, newExpires)
-			}
-		}
-
-		// Get and use cached data
-		entry, _ := manager.Get(ctx, key)
-		fmt.Printf("Using cached data: %s\n", string(entry.Data))
-		return nil
-	}
-
-	// Handle 200 OK
-	if resp.StatusCode == http.StatusOK {
-		// Convert response to cache entry
-		entry, err := cache.ResponseToEntry(resp)
-		if err != nil {
-			return err
-		}
-
-		// Store in cache
-		if err := manager.Set(ctx, key, entry); err != nil {
-			return err
-		}
-
-		fmt.Printf("Cached new response (TTL: %v)\n", entry.TTL())
-
-		// Use data
-		fmt.Printf("Data: %s\n", string(entry.Data))
-	}
-
-	return nil
-}
-
-// Example with actual ESI call (commented out - requires valid ESI endpoint)
-func exampleWithRealESI() {
-	/*
-		// This example shows how to use the cache with a real ESI call
-
-		redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-		manager := cache.NewManager(redisClient)
-		ctx := context.Background()
-
-		key := cache.CacheKey{
-			Endpoint: "/v1/status/",
-		}
-
-		// Try cache first
-		entry, err := manager.Get(ctx, key)
-		if err == cache.ErrCacheMiss {
-			// Make request to ESI
-			req, _ := http.NewRequest("GET", "https://esi.evetech.net/latest/status/", nil)
-			req.Header.Set("User-Agent", "eve-esi-client-example/1.0 (your@email.com)")
-
-			client := &http.Client{}
-			resp, err := client.Do(req)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer resp.Body.Close()
-
-			// Cache the response
-			entry, _ = cache.ResponseToEntry(resp)
-			manager.Set(ctx, key, entry)
-		}
-
-		// Use cached data
-		fmt.Printf("ESI Status: %s\n", string(entry.Data))
-	*/
 }

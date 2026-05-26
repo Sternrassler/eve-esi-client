@@ -50,7 +50,7 @@ func setupRedis(t *testing.T) (*redis.Client, func()) {
 	})
 
 	cleanup := func() {
-		redisClient.Close()
+		_ = redisClient.Close()
 		_ = container.Terminate(ctx)
 	}
 
@@ -92,7 +92,7 @@ func TestFullRequestFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// Override HTTP client to use mock
 	c.SetHTTPClient(&http.Client{
@@ -108,7 +108,7 @@ func TestFullRequestFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request 1 failed: %v", err)
 	}
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 
 	body1, _ := io.ReadAll(resp1.Body)
 	t.Logf("Response 1: %s", string(body1))
@@ -130,7 +130,7 @@ func TestFullRequestFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request 2 failed: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 
 	if mockESI.GetRequestCount() != 2 {
 		t.Errorf("After request 2: ESI requests = %d, want 2", mockESI.GetRequestCount())
@@ -160,7 +160,7 @@ func TestCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -174,7 +174,7 @@ func TestCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First request failed: %v", err)
 	}
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 
 	initialCount := mockESI.GetRequestCount()
 	if initialCount != 1 {
@@ -188,7 +188,7 @@ func TestCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second request failed: %v", err)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 
 	// Should have made a conditional request (304 response expected)
 	finalCount := mockESI.GetRequestCount()
@@ -216,7 +216,7 @@ func TestNotModified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -231,7 +231,7 @@ func TestNotModified(t *testing.T) {
 		t.Fatalf("First request failed: %v", err)
 	}
 	body1, _ := io.ReadAll(resp1.Body)
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 
 	if string(body1) != testData {
 		t.Errorf("First response body = %s, want %s", string(body1), testData)
@@ -245,7 +245,7 @@ func TestNotModified(t *testing.T) {
 		t.Fatalf("Second request failed: %v", err)
 	}
 	body2, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 
 	// Even though server returned 304, client should return cached body
 	if string(body2) != testData {
@@ -281,7 +281,7 @@ func TestRateLimitBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -337,7 +337,7 @@ func TestRetry5xxErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -351,7 +351,7 @@ func TestRetry5xxErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request failed after retries: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Final status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -384,7 +384,7 @@ func TestNoRetry4xxErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -398,7 +398,7 @@ func TestNoRetry4xxErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("Status = %d, want %d", resp.StatusCode, http.StatusNotFound)
@@ -425,7 +425,7 @@ func TestMetricsIncremented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -439,7 +439,7 @@ func TestMetricsIncremented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Verify the request was made
 	if mockESI.GetRequestCount() != 1 {
@@ -474,7 +474,7 @@ func TestCacheExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	c.SetHTTPClient(&http.Client{
 		Transport: &testTransport{mockServer: mockESI},
@@ -488,7 +488,7 @@ func TestCacheExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First request failed: %v", err)
 	}
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -517,7 +517,7 @@ func TestCacheExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Third request failed: %v", err)
 	}
-	resp3.Body.Close()
+	_ = resp3.Body.Close()
 
 	// Should have made at least 2 requests to ESI
 	if mockESI.GetRequestCount() < 2 {

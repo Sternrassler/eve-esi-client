@@ -48,7 +48,7 @@ func setupTestRedis(t *testing.T) (*redis.Client, func()) {
 	})
 
 	cleanup := func() {
-		redisClient.Close()
+		_ = redisClient.Close()
 		if err := redisC.Terminate(ctx); err != nil {
 			t.Logf("Failed to terminate Redis container: %v", err)
 		}
@@ -84,7 +84,7 @@ func TestReadyEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ESI client: %v", err)
 	}
-	defer esiClient.Close()
+	defer func() { _ = esiClient.Close() }()
 
 	handler := readyHandler(redisClient, esiClient)
 
@@ -108,7 +108,7 @@ func TestReadyEndpoint(t *testing.T) {
 
 	t.Run("not_ready_redis_down", func(t *testing.T) {
 		// Close Redis to simulate failure
-		redisClient.Close()
+		_ = redisClient.Close()
 
 		req := httptest.NewRequest("GET", "/ready", nil)
 		w := httptest.NewRecorder()
@@ -173,7 +173,7 @@ func TestESIProxyHandler_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create ESI client: %v", err)
 	}
-	defer esiClient.Close()
+	defer func() { _ = esiClient.Close() }()
 
 	handler := esiProxyHandler(esiClient)
 

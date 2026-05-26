@@ -28,7 +28,7 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Restore body for caller
 	resp.Body = io.NopCloser(bytes.NewReader(body))
