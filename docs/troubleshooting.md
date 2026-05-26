@@ -112,13 +112,13 @@ for _, endpoint := range endpoints {
    grep "ESI request error" app.log | cut -d' ' -f5 | sort | uniq -c
    ```
 
-3. Common causes:
+2. Common causes:
    - Invalid endpoint URLs (404 errors)
    - Malformed requests (400 errors)
    - Server issues (5xx errors - temporary)
    - Rate limit (520 errors)
 
-4. Fix based on error type:
+3. Fix based on error type:
    - 4xx: Fix request parameters/endpoints
    - 5xx: Implement retry with backoff (already done automatically)
    - 520: Reduce request rate
