@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -106,8 +107,8 @@ func esiProxyHandler(esiClient *client.Client) http.HandlerFunc {
 		w.WriteHeader(resp.StatusCode)
 
 		// Copy body
-		if _, err := w.Write([]byte("TODO: Copy response body")); err != nil {
-			log.Printf("Failed to write response: %v", err)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Printf("Failed to copy response body: %v", err)
 		}
 	}
 }
