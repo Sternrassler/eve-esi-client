@@ -8,33 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
-)
-
-// Prometheus metrics for rate limit tracking.
-var (
-	esiErrorsRemaining = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "esi_errors_remaining",
-		Help: "Number of errors remaining in current ESI rate limit window",
-	})
-
-	esiRateLimitBlocksTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "esi_rate_limit_blocks_total",
-		Help: "Total number of requests blocked due to critical error limit",
-	})
-
-	esiRateLimitThrottlesTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "esi_rate_limit_throttles_total",
-		Help: "Total number of requests throttled due to warning error limit",
-	})
-
-	esiRateLimitResetsTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "esi_rate_limit_resets_total",
-		Help: "Total number of error limit resets",
-	})
 )
 
 // decrIfExists dekrementiert errors_remaining nur, wenn der Key existiert
@@ -155,7 +130,6 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) (b
 
 	// Detect rate limit reset (errors remaining increased significantly)
 	if previousState != nil && remain > previousState.ErrorsRemaining+50 {
-		esiRateLimitResetsTotal.Inc()
 		t.logger.Info().
 			Int("previous", previousState.ErrorsRemaining).
 			Int("current", remain).
@@ -177,9 +151,6 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) (b
 	if err != nil {
 		return false, fmt.Errorf("store rate limit state in redis: %w", err)
 	}
-
-	// Update Prometheus metrics
-	esiErrorsRemaining.Set(float64(remain))
 
 	// Log state update
 	logEvent := t.logger.Info().
@@ -219,7 +190,6 @@ func (t *Tracker) ShouldAllowRequest(ctx context.Context) (bool, error) {
 			Dur("wait_duration", waitDuration).
 			Msg("ESI error limit critical - blocking request")
 
-		esiRateLimitBlocksTotal.Inc()
 		return false, nil
 	}
 
@@ -229,7 +199,6 @@ func (t *Tracker) ShouldAllowRequest(ctx context.Context) (bool, error) {
 			Int("errors_remaining", state.ErrorsRemaining).
 			Msg("ESI error limit warning - throttling request")
 
-		esiRateLimitThrottlesTotal.Inc()
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
