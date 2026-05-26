@@ -467,9 +467,9 @@ if err != nil {
    - Development: 100ms-500ms
    - Production: 1s-2s
 
-5. **Monitor metrics to tune configuration**
-   - Watch `esi_rate_limit_blocks_total` (should be near 0)
-   - Watch `esi_retry_exhausted_total` (indicates retry tuning needed)
+5. **Monitor logs to tune configuration**
+   - Watch for rate-limit blocks (should be rare)
+   - Watch for retry-exhausted warnings (indicates retry tuning needed)
 
 6. **Use separate Redis instance for production**
    - Don't share with other applications
@@ -478,11 +478,8 @@ if err != nil {
 
 ## See Also
 
-- [Getting Started Guide](getting-started.md)
-- [Monitoring Guide](monitoring.md)
 - [Troubleshooting Guide](troubleshooting.md)
-- [ADR-006: Error & Rate Limit Handling](adr/ADR-006-esi-error-rate-limit-handling.md)
-- [ADR-007: Caching Strategy](adr/ADR-007-esi-caching-strategy.md)
+- [README](../README.md)
 
 ## License
 

@@ -106,13 +106,7 @@ for _, endpoint := range endpoints {
 
 **Solution**:
 
-1. Check error distribution:
-   ```promql
-   # In Prometheus
-   rate(esi_errors_total[5m])
-   ```
-
-2. Identify error sources:
+1. Identify error sources:
    ```bash
    # Check which endpoints are failing
    grep "ESI request error" app.log | cut -d' ' -f5 | sort | uniq -c
@@ -162,7 +156,7 @@ for _, endpoint := range endpoints {
 
 ### Cache hit rate is 0%
 
-**Symptom**: `esi_cache_hits_total` metric is always 0.
+**Symptom**: Cache never hits — every request goes to ESI.
 
 **Cause**: Cache not working or TTL too short.
 
@@ -310,12 +304,7 @@ for _, endpoint := range endpoints {
 
 **Diagnosis**:
 
-1. Check request duration metrics:
-   ```promql
-   histogram_quantile(0.95, rate(esi_request_duration_seconds_bucket[5m]))
-   ```
-
-2. Breakdown latency sources:
+1. Breakdown latency sources:
    - Cache lookup: ~1-5ms
    - ESI request: ~100-500ms
    - Retry delays: 1-10s
@@ -330,8 +319,9 @@ for _, endpoint := range endpoints {
    ```
 
 2. Check if retries are happening:
-   ```promql
-   rate(esi_retries_total[5m])
+   ```bash
+   # Retry attempts are logged by the client
+   grep -i "retry" app.log
    ```
 
 3. Verify network path to ESI:
@@ -426,23 +416,6 @@ Look for:
 - `X-ESI-Error-Limit-Reset` header
 - Valid JSON response
 
-### Monitor Metrics
-
-Enable Prometheus metrics endpoint:
-
-```go
-import "github.com/prometheus/client_golang/prometheus/promhttp"
-
-http.Handle("/metrics", promhttp.Handler())
-go http.ListenAndServe(":9090", nil)
-```
-
-Key metrics to watch:
-- `esi_errors_remaining` - Should stay > 20
-- `esi_cache_hits_total` - Should increase
-- `esi_request_duration_seconds` - P95 should be < 1s
-- `esi_rate_limit_blocks_total` - Should be 0 or very low
-
 ### Trace Requests
 
 Add request IDs for tracing:
@@ -499,10 +472,9 @@ When reporting issues, include:
 
 ## See Also
 
-- [Getting Started Guide](getting-started.md)
 - [Configuration Guide](configuration.md)
-- [Monitoring Guide](monitoring.md)
 - [Example Code](../examples/library-usage/)
+- [README](../README.md)
 
 ## License
 

@@ -92,7 +92,7 @@ func main() {
 }
 ```
 
-See [docs/CLIENT_USAGE.md](docs/CLIENT_USAGE.md) for complete usage examples and best practices.
+See [examples/](examples/) for complete, runnable usage examples.
 
 ### Foundation Components (Also Available Separately)
 
