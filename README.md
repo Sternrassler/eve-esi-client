@@ -9,13 +9,12 @@
 
 - 🚀 **High Performance**: Redis-backed caching with ETag support
 - 🛡️ **Ban Protection**: ESI error rate limiting (3-tier threshold system)
-- 📊 **Pagination Support**: *(Coming in Phase 2)* Parallel page fetching with worker pools
+- 📊 **Pagination**: parallel page fetching with worker pools — *experimental*, standalone in `pkg/pagination` (not yet integrated into the client)
 - 🔄 **Cache Optimization**: ETag (If-None-Match), `expires` header compliance, 304 Not Modified
 - 📈 **Observability**: structured logging (Zerolog)
-- 🔌 **Flexible**: *(Phase 1)* Go library mode | *(Phase 2)* HTTP service mode
+- 🔌 **Modes**: Go library mode (stable) | HTTP service-mode proxy (*experimental*, `cmd/esi-proxy`)
 
-**Phase 1 Status (Foundation)**: ✅ **Rate Limiter, Cache Manager & ESI Client Core COMPLETED**  
-**Next**: Pagination Support (Issue #4) and Service Mode (Phase 2)
+**Status**: ✅ Rate Limiter, Cache Manager and the ESI Client Core are stable. Pagination (`pkg/pagination`) and the HTTP service-mode proxy (`cmd/esi-proxy`) exist but are **experimental** — not yet integrated/hardened, and the proxy has no published container image.
 
 ## Architecture
 
@@ -72,7 +71,13 @@ The Rate Limiter and Cache Manager can be used on their own, without the integra
 
 ### Service Mode (HTTP Proxy)
 
-*Coming in Phase 2* — a containerized HTTP proxy (`ghcr.io/sternrassler/eve-esi-client`).
+An **experimental** HTTP proxy lives in [`cmd/esi-proxy/`](cmd/esi-proxy/): it exposes `/health`, `/ready`, and `/esi/...` (forwarding to ESI with automatic rate limiting + caching).
+
+```bash
+go run ./cmd/esi-proxy   # listens on :8080 (PORT env to override)
+```
+
+No container image is published yet, and it is not production-hardened.
 
 ## Installation
 
@@ -159,7 +164,7 @@ Runnable examples in [examples/](examples/):
 - **[cache-usage/](examples/cache-usage/)** — standalone Cache Manager
 - **[ratelimit-usage/](examples/ratelimit-usage/)** — standalone Rate Limit Tracker
 
-*(Phase 2 will add service-mode and pagination examples.)*
+The experimental `pkg/pagination` (batch fetcher) and `cmd/esi-proxy` (HTTP proxy) are not yet covered by dedicated examples.
 
 ## Development
 

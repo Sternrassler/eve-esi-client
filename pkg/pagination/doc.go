@@ -17,5 +17,5 @@
 //   - Collects results with progress logging
 //   - Handles errors gracefully (returns partial data)
 //
-// See ADR-008 for architecture decisions.
+// Status: standalone component — not yet wired into the integrated client.
 package pagination
