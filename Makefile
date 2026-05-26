@@ -1,9 +1,5 @@
-.PHONY: help build test lint clean run docker-build docker-run
+.PHONY: help test test-coverage lint fmt vet clean deps tidy
 
-# Variables
-VERSION := $(shell cat VERSION)
-BINARY_NAME := esi-proxy
-DOCKER_IMAGE := ghcr.io/sternrassler/eve-esi-client
 GO := go
 GOFLAGS := -v
 
@@ -12,10 +8,6 @@ help: ## Show this help message
 	@echo ''
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-build: ## Build the ESI proxy binary
-	@echo "Building $(BINARY_NAME) v$(VERSION)..."
-	$(GO) build $(GOFLAGS) -o bin/$(BINARY_NAME) ./cmd/esi-proxy
 
 test: ## Run tests
 	@echo "Running tests..."
@@ -39,21 +31,7 @@ vet: ## Run go vet
 
 clean: ## Clean build artifacts
 	@echo "Cleaning..."
-	rm -rf bin/
 	rm -f coverage.out coverage.html
-
-run: ## Run the ESI proxy service
-	@echo "Starting ESI proxy on :8080..."
-	$(GO) run ./cmd/esi-proxy
-
-docker-build: ## Build Docker image
-	@echo "Building Docker image $(DOCKER_IMAGE):$(VERSION)..."
-	docker build -t $(DOCKER_IMAGE):$(VERSION) -t $(DOCKER_IMAGE):latest .
-
-docker-run: ## Run Docker container
-	docker run --rm -p 8080:8080 \
-		-e REDIS_URL=host.docker.internal:6379 \
-		$(DOCKER_IMAGE):latest
 
 deps: ## Download dependencies
 	@echo "Downloading dependencies..."

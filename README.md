@@ -12,9 +12,9 @@
 - 📊 **Pagination**: parallel page fetching with worker pools (`pkg/pagination`, tested) — usable standalone with any `PageFetcher` (the client implements it); not yet wired into the client's high-level API
 - 🔄 **Cache Optimization**: ETag (If-None-Match), `expires` header compliance, 304 Not Modified
 - 📈 **Observability**: structured logging (Zerolog)
-- 🔌 **Modes**: Go library mode (stable) | HTTP service-mode proxy (*experimental*, `cmd/esi-proxy`)
+- 🔌 **Library**: import as a Go package
 
-**Status**: ✅ Rate Limiter, Cache Manager and the ESI Client Core are stable. Pagination (`pkg/pagination`) is tested and usable standalone, but not yet wired into the client's high-level API. The HTTP service-mode proxy (`cmd/esi-proxy`) is **experimental** — not hardened, and has no published container image.
+**Status**: ✅ Rate Limiter, Cache Manager and the ESI Client Core are stable. Pagination (`pkg/pagination`) is tested and usable standalone, but not yet wired into the client's high-level API.
 
 ## Architecture
 
@@ -23,11 +23,8 @@
 │                    Your Application                         │
 └─────────────┬───────────────────────────────────────────────┘
               │
-              ├─ Option A: Library Mode (Go import)
-              │  import "github.com/Sternrassler/eve-esi-client/pkg/client"
-              │
-              └─ Option B: Service Mode (HTTP API)
-                 http://localhost:8080/esi/v4/markets/.../orders/
+              └─ Library Mode (Go import)
+                 import "github.com/Sternrassler/eve-esi-client/pkg/client"
                               │
 ┌─────────────────────────────┴───────────────────────────────┐
 │              EVE ESI Client Infrastructure                  │
@@ -69,16 +66,6 @@ The Rate Limiter and Cache Manager can be used on their own, without the integra
 - **Rate Limit Tracker** — proactively blocks requests when ESI's error budget runs low. See **[examples/ratelimit-usage/](examples/ratelimit-usage/)**.
 - **Cache Manager** — Redis-backed cache with ETag / conditional-request handling. See **[examples/cache-usage/](examples/cache-usage/)**.
 
-### Service Mode (HTTP Proxy)
-
-An **experimental** HTTP proxy lives in [`cmd/esi-proxy/`](cmd/esi-proxy/): it exposes `/health`, `/ready`, and `/esi/...` (forwarding to ESI with automatic rate limiting + caching).
-
-```bash
-go run ./cmd/esi-proxy   # listens on :8080 (PORT env to override)
-```
-
-No container image is published yet, and it is not production-hardened.
-
 ## Installation
 
 ```bash
@@ -105,7 +92,7 @@ go get github.com/Sternrassler/eve-esi-client/pkg/cache
 | `MaxRetries` | 3 | Retry attempts for transient errors |
 | `InitialBackoff` | 1s | First retry backoff (grows exponentially) |
 
-Full reference: **[docs/configuration.md](docs/configuration.md)**. Service-mode environment variables (`REDIS_URL`, `RATE_LIMIT`, `USER_AGENT`, `LOG_LEVEL`, …) are documented there too.
+Full reference: **[docs/configuration.md](docs/configuration.md)**.
 
 ## ESI Compliance
 
@@ -165,8 +152,6 @@ Runnable examples in [examples/](examples/):
 - **[ratelimit-usage/](examples/ratelimit-usage/)** — standalone Rate Limit Tracker
 - **[pagination-usage/](examples/pagination-usage/)** — parallel page fetching with the batch fetcher
 
-The experimental `cmd/esi-proxy` (HTTP proxy) is not yet covered by a dedicated example.
-
 ## Development
 
 ```bash
@@ -175,17 +160,9 @@ cd eve-esi-client
 go mod download
 make test    # run tests
 make lint    # run linter
-make run     # start development service
 ```
 
-## Health Checks & Logging
-
-### Health Checks (Service Mode)
-
-- `GET /health` — basic liveness, returns `200 OK`.
-- `GET /ready` — readiness; checks Redis connection and rate-limit state (`200` or `503`).
-
-### Structured Logging
+## Logging
 
 The client uses [zerolog](https://github.com/rs/zerolog) for structured JSON logging via the `pkg/logging` package (`logging.Setup` / `logging.NewLogger`).
 
