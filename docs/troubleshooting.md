@@ -467,7 +467,6 @@ When reporting issues, include:
 - Error message and full stack trace
 - Configuration (sanitize secrets!)
 - Logs (with debug level enabled)
-- Metrics screenshots if available
 - Steps to reproduce
 
 ## See Also

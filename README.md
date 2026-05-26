@@ -175,7 +175,7 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ## Contributing
 
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+Contributions welcome! Conventional Commits sind Pflicht (via `.githooks`), und `make lint test` muss grün sein.
 
 ## Related Projects
 
