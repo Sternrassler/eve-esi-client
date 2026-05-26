@@ -9,12 +9,12 @@
 
 - 🚀 **High Performance**: Redis-backed caching with ETag support
 - 🛡️ **Ban Protection**: ESI error rate limiting (3-tier threshold system)
-- 📊 **Pagination**: parallel page fetching with worker pools — *experimental*, standalone in `pkg/pagination` (not yet integrated into the client)
+- 📊 **Pagination**: parallel page fetching with worker pools (`pkg/pagination`, tested) — usable standalone with any `PageFetcher` (the client implements it); not yet wired into the client's high-level API
 - 🔄 **Cache Optimization**: ETag (If-None-Match), `expires` header compliance, 304 Not Modified
 - 📈 **Observability**: structured logging (Zerolog)
 - 🔌 **Modes**: Go library mode (stable) | HTTP service-mode proxy (*experimental*, `cmd/esi-proxy`)
 
-**Status**: ✅ Rate Limiter, Cache Manager and the ESI Client Core are stable. Pagination (`pkg/pagination`) and the HTTP service-mode proxy (`cmd/esi-proxy`) exist but are **experimental** — not yet integrated/hardened, and the proxy has no published container image.
+**Status**: ✅ Rate Limiter, Cache Manager and the ESI Client Core are stable. Pagination (`pkg/pagination`) is tested and usable standalone, but not yet wired into the client's high-level API. The HTTP service-mode proxy (`cmd/esi-proxy`) is **experimental** — not hardened, and has no published container image.
 
 ## Architecture
 
@@ -163,8 +163,9 @@ Runnable examples in [examples/](examples/):
 - **[library-usage/](examples/library-usage/)** — integrated client: config, request, caching, error handling
 - **[cache-usage/](examples/cache-usage/)** — standalone Cache Manager
 - **[ratelimit-usage/](examples/ratelimit-usage/)** — standalone Rate Limit Tracker
+- **[pagination-usage/](examples/pagination-usage/)** — parallel page fetching with the batch fetcher
 
-The experimental `pkg/pagination` (batch fetcher) and `cmd/esi-proxy` (HTTP proxy) are not yet covered by dedicated examples.
+The experimental `cmd/esi-proxy` (HTTP proxy) is not yet covered by a dedicated example.
 
 ## Development
 

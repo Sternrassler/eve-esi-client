@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `examples/ratelimit-usage/` — standalone rate-limit tracker example.
+- `examples/pagination-usage/` — parallel batch-fetch example.
+- Unit tests for `pkg/pagination` (batch fetcher: single/multi-page, partial failure, config clamping, context cancellation).
 
 ### Fixed
 - `cmd/esi-proxy` now copies the upstream ESI response body (was a `TODO` stub).
