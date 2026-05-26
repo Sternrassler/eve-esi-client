@@ -155,7 +155,6 @@ func main() {
 	fmt.Println("  ✅ ETag-based conditional requests")
 	fmt.Println("  ✅ Error handling and retries")
 	fmt.Println("  ✅ Structured logging")
-	fmt.Println("  ✅ Prometheus metrics (exposed at /metrics)")
 }
 
 // getEnv retrieves an environment variable or returns a default value.

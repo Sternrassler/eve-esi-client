@@ -17,50 +17,10 @@ import (
 
 	"github.com/Sternrassler/eve-esi-client/pkg/cache"
 	"github.com/Sternrassler/eve-esi-client/pkg/ratelimit"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
-)
-
-// Prometheus metrics for ESI client operations.
-// NOTE: These metrics are process-global (promauto/DefaultRegisterer).
-// Only one Client instance per process is supported — a second instance would
-// panic on metric re-registration. Acceptable for the single-process deployment.
-var (
-	esiRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_requests_total",
-		Help: "Total ESI requests by endpoint and status",
-	}, []string{"endpoint", "status"})
-
-	esiRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "esi_request_duration_seconds",
-		Help:    "ESI request duration in seconds by endpoint",
-		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10},
-	}, []string{"endpoint"})
-
-	esiErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_errors_total",
-		Help: "Total ESI errors by class",
-	}, []string{"class"})
-
-	esiRetriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_retries_total",
-		Help: "Total number of retry attempts by error class",
-	}, []string{"error_class"})
-
-	esiRetryBackoffSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "esi_retry_backoff_seconds",
-		Help:    "Backoff duration for retries by error class",
-		Buckets: []float64{0.5, 1, 2, 5, 10, 30, 60},
-	}, []string{"error_class"})
-
-	esiRetryExhaustedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "esi_retry_exhausted_total",
-		Help: "Total number of times retry attempts were exhausted by error class",
-	}, []string{"error_class"})
 )
 
 // ErrorClass represents a classification of HTTP errors.
@@ -187,12 +147,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	endpoint := req.URL.Path
 
-	// Start request timing
-	startTime := time.Now()
-	defer func() {
-		esiRequestDuration.WithLabelValues(endpoint).Observe(time.Since(startTime).Seconds())
-	}()
-
 	// Gate 0a: req/s-Limiter (in-memory Token-Bucket)
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
@@ -216,7 +170,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		c.logger.Warn().
 			Str("endpoint", endpoint).
 			Msg("Request blocked by rate limiter")
-		esiRequestsTotal.WithLabelValues(endpoint, "rate_limited").Inc()
 		return nil, fmt.Errorf("request blocked: rate limit critical")
 	}
 
@@ -239,7 +192,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// Step 3: Make Conditional Request if cache hit
 	if cachedEntry != nil && cache.ShouldMakeConditionalRequest(cachedEntry) {
 		cache.AddConditionalHeaders(req, cachedEntry)
-		cache.ConditionalRequestsSent.Inc()
 		c.logger.Debug().
 			Str("endpoint", endpoint).
 			Str("etag", cachedEntry.ETag).
@@ -291,8 +243,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		if reqErr != nil {
 			c.logger.Error().Err(reqErr).Str("endpoint", endpoint).Msg("HTTP request failed")
 			errClass = c.classifyError(nil, reqErr)
-			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
-			esiRequestsTotal.WithLabelValues(endpoint, "network_error").Inc()
 			lastErr = reqErr
 			return reqErr
 		}
@@ -318,8 +268,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 					c.logger.Warn().Err(rerr).Msg("Failed to record error in rate limiter")
 				}
 			}
-			esiErrorsTotal.WithLabelValues(string(errClass)).Inc()
-			esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
 
 			c.logger.Warn().
 				Str("endpoint", endpoint).
@@ -344,7 +292,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		// Success
-		esiRequestsTotal.WithLabelValues(endpoint, fmt.Sprintf("%d", resp.StatusCode)).Inc()
 		return nil
 	}, func(err error) ErrorClass {
 		// Classify error dynamically for retry logic
@@ -362,8 +309,6 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// Step 7: Handle 304 Not Modified
 	if resp.StatusCode == http.StatusNotModified {
 		c.logger.Debug().Str("endpoint", endpoint).Msg("304 Not Modified - using cache")
-		esiRequestsTotal.WithLabelValues(endpoint, "304").Inc()
-		cache.NotModifiedResponses.Inc()
 
 		// Update cache TTL from new expires header
 		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {

@@ -9,9 +9,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Prometheus metrics for retry operations.
-// ...existing code...
-
 // RetryConfig holds the configuration for retry logic.
 type RetryConfig struct {
 	// MaxAttempts is the maximum number of retry attempts (including the initial request).
@@ -115,12 +112,8 @@ func retryWithBackoff(ctx context.Context, fn func() error, classifyFn func(erro
 			backoff = config.InitialBackoff
 		}
 
-		// Record retry metrics
-		esiRetriesTotal.WithLabelValues(string(currentClass)).Inc()
-
 		// Add jitter (±20% randomness)
 		jitter := time.Duration(float64(backoff) * (0.8 + rand.Float64()*0.4))
-		esiRetryBackoffSeconds.WithLabelValues(string(currentClass)).Observe(jitter.Seconds())
 
 		log.Debug().
 			Str("error_class", string(currentClass)).
@@ -148,7 +141,6 @@ func retryWithBackoff(ctx context.Context, fn func() error, classifyFn func(erro
 	}
 
 	// All retries exhausted
-	esiRetryExhaustedTotal.WithLabelValues(string(currentClass)).Inc()
 	log.Warn().
 		Str("error_class", string(currentClass)).
 		Int("max_attempts", config.MaxAttempts).

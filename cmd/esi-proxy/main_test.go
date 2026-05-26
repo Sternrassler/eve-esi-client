@@ -5,12 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/client"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -121,47 +119,6 @@ func TestReadyEndpoint(t *testing.T) {
 			t.Errorf("Expected status 503, got %d", resp.StatusCode)
 		}
 	})
-}
-
-func TestMetricsEndpoint(t *testing.T) {
-	// We need to ensure metrics packages are imported
-	// by creating a client which will register all metrics
-	redisClient, cleanup := setupTestRedis(t)
-	defer cleanup()
-
-	// Create ESI client to ensure all metrics are registered
-	_, err := client.New(client.DefaultConfig(redisClient, "test/1.0"))
-	if err != nil {
-		t.Fatalf("Failed to create ESI client: %v", err)
-	}
-
-	req := httptest.NewRequest("GET", "/metrics", nil)
-	w := httptest.NewRecorder()
-
-	handler := promhttp.Handler()
-	handler.ServeHTTP(w, req)
-
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
-	}
-
-	bodyStr := string(body)
-
-	// Just verify we get prometheus output format
-	if !strings.Contains(bodyStr, "# HELP") || !strings.Contains(bodyStr, "# TYPE") {
-		t.Error("Expected Prometheus format metrics output")
-	}
-
-	// Verify at least the error remaining gauge is present
-	// (this is always initialized even if no requests are made)
-	if !strings.Contains(bodyStr, "esi_errors_remaining") {
-		t.Error("Expected metrics output to contain esi_errors_remaining")
-	}
-
-	t.Logf("Metrics endpoint returned %d bytes of data", len(bodyStr))
 }
 
 func TestESIProxyHandler_Integration(t *testing.T) {

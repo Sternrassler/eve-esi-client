@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/client"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -39,7 +38,6 @@ func main() {
 	// HTTP Server
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/ready", readyHandler(redisClient, esiClient))
-	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/esi/", esiProxyHandler(esiClient))
 
 	addr := ":" + port
@@ -48,7 +46,6 @@ func main() {
 	log.Printf("Endpoints:")
 	log.Printf("  - Health:  http://localhost%s/health", addr)
 	log.Printf("  - Ready:   http://localhost%s/ready", addr)
-	log.Printf("  - Metrics: http://localhost%s/metrics", addr)
 	log.Printf("  - Proxy:   http://localhost%s/esi/...", addr)
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
