@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # check-commit-msg.sh – Validiert Commit Message Konventionen (Conventional Commits)
-# Referenz: copilot-instructions.md Abschnitt 2.7
 
 set -euo pipefail
 

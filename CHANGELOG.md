@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prometheus metrics feature** — `pkg/metrics`, the promauto instrumentation across `pkg/cache`, `pkg/client`, `pkg/ratelimit`, the `/metrics` endpoint, monitoring docs, and the `prometheus/client_golang` dependency. Observability now relies on structured logging.
 - **Architecture Decision Records** and their enforcement (pre-commit/CI ADR checks, `check-adr*` scripts, ADR policy in copilot-instructions).
 - **HTTP service-mode proxy** (`cmd/esi-proxy`) — removed entirely, including the Makefile `build`/`run`/`docker-*` targets and container-image references. This is now a library-only module; use `pkg/client` directly.
+- **`VERSION` file** and `scripts/common/check-version-changelog.sh` — `CHANGELOG.md` plus Git tags (`vX.Y.Z`) are the SemVer source of truth.
+- **GitHub Copilot governance artefacts** — `.github/copilot-instructions.md` and `scripts/common/check-normative.sh` (and its pre-commit step). Commit-message and security checks remain.
 
 ### Changed
 - README slimmed to a single Quick Start snippet; all other code moved to runnable `examples/`. Docs pruned to `configuration.md` + `troubleshooting.md`.
