@@ -46,6 +46,12 @@ jobs:
     - name: Run go vet
       run: go vet ./...
 
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: latest
+        args: --timeout=5m
+
     - name: Run unit tests
       run: go test -v -race -coverprofile=coverage-unit.out ./pkg/...
 
@@ -61,5 +67,3 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
-
-# Linting runs locally via the pre-commit hook (golangci-lint), not in CI.
