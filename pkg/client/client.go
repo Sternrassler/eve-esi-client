@@ -88,8 +88,8 @@ type Client struct {
 	cache       *cache.Manager
 	config      Config
 	logger      zerolog.Logger
-	limiter     *rate.Limiter  // req/s Token-Bucket (in-memory)
-	sem         chan struct{}   // Concurrency-Semaphore (in-memory)
+	limiter     *rate.Limiter // req/s Token-Bucket (in-memory)
+	sem         chan struct{} // Concurrency-Semaphore (in-memory)
 }
 
 // Config holds the client configuration.
@@ -335,7 +335,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 					ErrorClass: errClass,
 					Message:    resp.Status,
 				}
-				resp.Body.Close() // Close the body before retrying
+				_ = resp.Body.Close() // Close the body before retrying
 				return lastErr
 			}
 
@@ -354,7 +354,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// Handle retry exhaustion
 	if retryErr != nil {
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return nil, retryErr
 	}
@@ -375,7 +375,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		// Return cached response
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return c.cacheEntryToResponse(cachedEntry), nil
 	}
 
@@ -463,7 +463,7 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	if err != nil {
 		return nil, 0, fmt.Errorf("GET request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check status
 	if resp.StatusCode != http.StatusOK {

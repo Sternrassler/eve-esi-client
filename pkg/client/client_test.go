@@ -40,8 +40,8 @@ func setupTestRedis(t *testing.T) *redis.Client {
 	}
 
 	t.Cleanup(func() {
-		client.FlushDB(context.Background())
-		client.Close()
+		_ = client.FlushDB(context.Background()).Err()
+		_ = client.Close()
 	})
 
 	return client
@@ -49,7 +49,7 @@ func setupTestRedis(t *testing.T) *redis.Client {
 
 func TestNew_Validation(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	tests := []struct {
 		name        string
@@ -141,7 +141,7 @@ func TestNew_Validation(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 
 	userAgent := "TestApp/1.0.0"
 	cfg := DefaultConfig(redisClient, userAgent)
@@ -327,7 +327,7 @@ func TestDo_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First request failed: %v", err)
 	}
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 
 	if requestCount != 1 {
 		t.Errorf("Request count after first request = %d, want 1", requestCount)
@@ -344,7 +344,7 @@ func TestDo_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second request failed: %v", err)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 
 	// Verify conditional headers were added (ETag should be set in the request)
 	// This is tested implicitly through cache.AddConditionalHeaders
@@ -385,7 +385,7 @@ func TestDo_Handle304NotModified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First request failed: %v", err)
 	}
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 
 	if resp1.StatusCode != http.StatusOK {
 		t.Errorf("First response status = %d, want %d", resp1.StatusCode, http.StatusOK)
@@ -400,7 +400,7 @@ func TestDo_Handle304NotModified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second request failed: %v", err)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 
 	// The client should return the cached response
 	if resp2.StatusCode != http.StatusOK && resp2.StatusCode != http.StatusNotModified {
@@ -449,7 +449,7 @@ func TestDo_ErrorClassification(t *testing.T) {
 				}
 				if resp != nil {
 					statusCode := resp.StatusCode
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if statusCode != tt.statusCode {
 						t.Errorf("Expected status %d, got %d", tt.statusCode, statusCode)
 					}
@@ -467,7 +467,7 @@ func TestDo_ErrorClassification(t *testing.T) {
 				t.Fatal("Expected error after retry exhaustion, got nil")
 			}
 			if resp != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 
 			// Verify retries were attempted (should be max 3 attempts)
@@ -546,7 +546,7 @@ func TestGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -599,7 +599,7 @@ func TestDo_RetryOnServerError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do() failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200 after retry, got %d", resp.StatusCode)
@@ -635,7 +635,7 @@ func TestDo_NoRetryOnClientError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do() failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("Expected status 404, got %d", resp.StatusCode)
@@ -684,7 +684,7 @@ func TestDo_RetryOnRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do() failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200 after retry, got %d", resp.StatusCode)

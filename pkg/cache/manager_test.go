@@ -34,8 +34,8 @@ func setupTestRedis(t *testing.T) *redis.Client {
 	}
 
 	t.Cleanup(func() {
-		client.FlushDB(context.Background())
-		client.Close()
+		_ = client.FlushDB(context.Background()).Err()
+		_ = client.Close()
 	})
 
 	return client
@@ -43,7 +43,7 @@ func setupTestRedis(t *testing.T) *redis.Client {
 
 func TestNewManager(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	manager := NewManager(client)
 	if manager == nil {

@@ -36,8 +36,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create ESI client: %v", err)
 	}
-	defer esiClient.Close()
-
 	// HTTP Server
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/ready", readyHandler(redisClient, esiClient))
@@ -54,13 +52,15 @@ func main() {
 	log.Printf("  - Proxy:   http://localhost%s/esi/...", addr)
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+		log.Printf("Server failed: %v", err)
+		_ = esiClient.Close()
+		os.Exit(1)
 	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "OK")
+	_, _ = fmt.Fprintf(w, "OK")
 }
 
 func readyHandler(redisClient *redis.Client, esiClient *client.Client) http.HandlerFunc {
@@ -71,13 +71,13 @@ func readyHandler(redisClient *redis.Client, esiClient *client.Client) http.Hand
 		// Check Redis connection
 		if err := redisClient.Ping(ctx).Err(); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, "Redis unavailable: %v", err)
+			_, _ = fmt.Fprintf(w, "Redis unavailable: %v", err)
 			return
 		}
 
 		// All checks passed
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
+		_, _ = fmt.Fprintf(w, "OK")
 	}
 }
 
@@ -96,7 +96,7 @@ func esiProxyHandler(esiClient *client.Client) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("ESI request failed: %v", err), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Copy response headers
 		for key, values := range resp.Header {

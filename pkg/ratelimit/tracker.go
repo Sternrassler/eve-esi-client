@@ -187,13 +187,14 @@ func (t *Tracker) UpdateFromHeaders(ctx context.Context, headers http.Header) (b
 		Time("reset_at", state.ResetAt).
 		Bool("is_healthy", state.IsHealthy)
 
-	if state.NeedsCriticalBlock() {
+	switch {
+	case state.NeedsCriticalBlock():
 		logEvent = t.logger.Error()
 		logEvent.Msg("ESI error limit CRITICAL - requests will be blocked")
-	} else if state.NeedsThrottling() {
+	case state.NeedsThrottling():
 		logEvent = t.logger.Warn()
 		logEvent.Msg("ESI error limit WARNING - requests will be throttled")
-	} else {
+	default:
 		logEvent.Msg("ESI error limit state updated")
 	}
 

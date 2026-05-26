@@ -55,7 +55,7 @@ func Setup(cfg Config) zerolog.Logger {
 	zerolog.SetGlobalLevel(level)
 
 	// Configure output
-	var output io.Writer = cfg.Output
+	output := cfg.Output
 	if cfg.Pretty {
 		output = zerolog.ConsoleWriter{Out: cfg.Output}
 	}
