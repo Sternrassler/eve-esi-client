@@ -1,6 +1,6 @@
 # EVE ESI Client
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Production-ready ESI (EVE Swagger Interface) client infrastructure for EVE Online third-party applications.**
@@ -48,227 +48,59 @@
 
 ## Quick Start
 
-### Integrated Client (Available Now)
+Create a client and make a request — rate limiting and caching happen automatically:
 
 ```go
-package main
+redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+defer redisClient.Close()
 
-import (
-    "context"
-    "fmt"
-    "io"
-    "log"
-    
-    "github.com/Sternrassler/eve-esi-client/pkg/client"
-    "github.com/redis/go-redis/v9"
-)
+esiClient, _ := client.New(client.DefaultConfig(redisClient, "MyApp/1.0 (contact@example.com)"))
+defer esiClient.Close()
 
-func main() {
-    // Create Redis client
-    redisClient := redis.NewClient(&redis.Options{
-        Addr: "localhost:6379",
-    })
-    defer redisClient.Close()
-    
-    // Create ESI client with default configuration
-    cfg := client.DefaultConfig(redisClient, "MyApp/1.0.0 (contact@example.com)")
-    esiClient, err := client.New(cfg)
-    if err != nil {
-        log.Fatalf("Failed to create ESI client: %v", err)
-    }
-    defer esiClient.Close()
-    
-    // Make a request (automatic rate limiting + caching)
-    ctx := context.Background()
-    resp, err := esiClient.Get(ctx, "/v1/status/")
-    if err != nil {
-        log.Fatalf("Request failed: %v", err)
-    }
-    defer resp.Body.Close()
-    
-    // Read response
-    body, _ := io.ReadAll(resp.Body)
-    fmt.Printf("ESI Status: %s\n", body)
-}
+resp, _ := esiClient.Get(context.Background(), "/v1/status/")
+defer resp.Body.Close()
 ```
 
-See [examples/](examples/) for complete, runnable usage examples.
+→ Full runnable program: **[examples/library-usage/](examples/library-usage/)**
 
-### Foundation Components (Also Available Separately)
+### Foundation Components (also usable standalone)
 
-You can also use the Rate Limiter and Cache Manager as standalone components if needed.
+The Rate Limiter and Cache Manager can be used on their own, without the integrated client:
 
-#### Rate Limit Tracker
+- **Rate Limit Tracker** — proactively blocks requests when ESI's error budget runs low. See **[examples/ratelimit-usage/](examples/ratelimit-usage/)**.
+- **Cache Manager** — Redis-backed cache with ETag / conditional-request handling. See **[examples/cache-usage/](examples/cache-usage/)**.
 
-```go
-package main
+### Service Mode (HTTP Proxy)
 
-import (
-    "context"
-    "github.com/Sternrassler/eve-esi-client/pkg/ratelimit"
-    "github.com/redis/go-redis/v9"
-    "github.com/rs/zerolog"
-    "os"
-)
-
-func main() {
-    redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-    logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
-    tracker := ratelimit.NewTracker(redisClient, logger)
-    
-    ctx := context.Background()
-    
-    // Check if request should be allowed
-    allowed, err := tracker.ShouldAllowRequest(ctx)
-    if !allowed {
-        // Request blocked - wait for rate limit reset
-        state, _ := tracker.GetState(ctx)
-        logger.Warn().
-            Int("errorsRemaining", state.ErrorsRemaining).
-            Msg("Rate limit reached - request blocked")
-        return
-    }
-    
-    // Make your ESI request...
-    // resp, err := http.Get("https://esi.evetech.net/...")
-    
-    // Update tracker from ESI response headers
-    // tracker.UpdateFromHeaders(ctx, resp.Header)
-}
-```
-
-#### Cache Manager
-
-```go
-package main
-
-import (
-    "context"
-    "github.com/Sternrassler/eve-esi-client/pkg/cache"
-    "github.com/redis/go-redis/v9"
-    "net/http"
-)
-
-func main() {
-    redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-    manager := cache.NewManager(redisClient)
-    
-    ctx := context.Background()
-    endpoint := "/v1/markets/10000002/orders/"
-    params := map[string]string{"order_type": "sell"}
-    
-    // Try cache first
-    cacheKey := cache.GenerateKey(endpoint, params)
-    entry, err := manager.Get(ctx, cacheKey)
-    
-    if err == nil && !entry.IsExpired() {
-        // Cache hit - use cached response
-        println("Cache hit!")
-        // Use entry.Body, entry.StatusCode, etc.
-        return
-    }
-    
-    // Cache miss - make request
-    req, _ := http.NewRequest("GET", "https://esi.evetech.net"+endpoint, nil)
-    
-    // Add conditional headers if we have a cached entry
-    if entry != nil {
-        cache.AddConditionalHeaders(req, entry)
-    }
-    
-    resp, _ := http.DefaultClient.Do(req)
-    defer resp.Body.Close()
-    
-    // Convert response to cache entry and store
-    newEntry, _ := cache.ResponseToEntry(resp, endpoint, params)
-    manager.Set(ctx, cacheKey, newEntry)
-}
-```
-
-See [examples/cache-usage/](examples/cache-usage/) for complete standalone examples.
-
-### Service Mode (HTTP Proxy) - Coming in Phase 2
-
-```bash
-# Coming in Phase 2
-# docker run -p 8080:8080 \
-#     -e REDIS_URL=redis:6379 \
-#     ghcr.io/sternrassler/eve-esi-client:latest
-```
+*Coming in Phase 2* — a containerized HTTP proxy (`ghcr.io/sternrassler/eve-esi-client`).
 
 ## Installation
 
-### As Library (Complete Client Available Now)
-
 ```bash
-# Install full ESI client with integrated components
+# Full ESI client with integrated components
 go get github.com/Sternrassler/eve-esi-client/pkg/client
 
-# Or install individual components
+# Or individual components
 go get github.com/Sternrassler/eve-esi-client/pkg/ratelimit
 go get github.com/Sternrassler/eve-esi-client/pkg/cache
 ```
 
-### As Service (Docker)
-
-```yaml
-# docker-compose.yml
-services:
-  esi-proxy:
-    image: ghcr.io/sternrassler/eve-esi-client:latest
-    ports:
-      - "8080:8080"
-    environment:
-      REDIS_URL: redis:6379
-      LOG_LEVEL: info
-    depends_on:
-      - redis
-  
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
-
-volumes:
-  redis-data:
-```
-
 ## Configuration
 
-### Library Mode
+`client.DefaultConfig(redis, userAgent)` returns sensible defaults; override fields as needed:
 
-```go
-config := client.Config{
-    // Required
-    Redis:     redisClient,
-    UserAgent: "MyApp/1.0 (contact@example.com)",
-    
-    // Rate Limiting
-    RateLimit:         10,   // requests per second
-    ErrorThreshold:    10,   // stop when < 10 errors remaining
-    
-    // Concurrency
-    MaxConcurrency:    5,    // parallel requests
-    
-    // Caching
-    MemoryCacheTTL:    60,   // seconds
-    RespectExpires:    true, // MUST be true (ESI requirement)
-    
-    // Retry
-    MaxRetries:        3,
-    InitialBackoff:    1,    // seconds
-}
-```
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `UserAgent` | — (required) | ESI requires `AppName/Version (contact@example.com)` |
+| `RateLimit` | 10 | Requests per second |
+| `ErrorThreshold` | 10 | Block when fewer errors remain in the ESI budget |
+| `MaxConcurrency` | 5 | Max parallel requests |
+| `MemoryCacheTTL` | 60s | In-memory cache TTL |
+| `RespectExpires` | true | Honor ESI `expires` header (MUST stay true) |
+| `MaxRetries` | 3 | Retry attempts for transient errors |
+| `InitialBackoff` | 1s | First retry backoff (grows exponentially) |
 
-### Service Mode (Environment Variables)
-
-```bash
-REDIS_URL=localhost:6379
-RATE_LIMIT=10
-MAX_CONCURRENCY=5
-USER_AGENT="MyApp/1.0 (contact@example.com)"
-LOG_LEVEL=info
-```
+Full reference: **[docs/configuration.md](docs/configuration.md)**. Service-mode environment variables (`REDIS_URL`, `RATE_LIMIT`, `USER_AGENT`, `LOG_LEVEL`, …) are documented there too.
 
 ## ESI Compliance
 
@@ -284,15 +116,7 @@ This client strictly follows ESI rules to prevent bans:
 
 ESI uses **error rate limiting** instead of request rate limiting. The client automatically monitors ESI's error limit headers to prevent IP bans.
 
-### How It Works
-
-The rate limit tracker monitors two critical headers:
-- `X-ESI-Error-Limit-Remain`: Number of errors remaining before ESI blocks requests
-- `X-ESI-Error-Limit-Reset`: Seconds until the error limit resets
-
-### Thresholds
-
-The tracker operates in three states:
+The tracker watches `X-ESI-Error-Limit-Remain` / `X-ESI-Error-Limit-Reset` and operates in three states:
 
 | State | Errors Remaining | Behavior |
 |-------|-----------------|----------|
@@ -300,44 +124,13 @@ The tracker operates in three states:
 | 🟡 **Warning** | 20-49 | Requests throttled (1s delay between calls) |
 | 🔴 **Critical** | < 5 | All requests blocked until reset |
 
-### State Storage
-
-Rate limit state is shared across all client instances via Redis, ensuring coordinated behavior in multi-instance deployments.
-
-### Library Usage
-
-```go
-import (
-    "github.com/Sternrassler/eve-esi-client/pkg/ratelimit"
-    "github.com/redis/go-redis/v9"
-    "github.com/rs/zerolog"
-)
-
-// Create tracker
-redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-logger := zerolog.New(os.Stderr)
-tracker := ratelimit.NewTracker(redisClient, logger)
-
-// Check if request should be allowed
-allowed, err := tracker.ShouldAllowRequest(ctx)
-if !allowed {
-    // Request blocked - wait for rate limit reset
-    return
-}
-
-// After receiving ESI response, update state from headers
-tracker.UpdateFromHeaders(ctx, resp.Header)
-```
-
-**Important**: Exceeding the error limit results in **permanent IP ban** from ESI. The tracker prevents this by proactively blocking requests when the limit becomes critical.
+State is shared across all client instances via Redis, ensuring coordinated behavior in multi-instance deployments. **Exceeding the error limit results in a permanent IP ban** — the integrated client handles this for you; for standalone use see **[examples/ratelimit-usage/](examples/ratelimit-usage/)**.
 
 ## Error Handling & Retry Logic
 
-The client implements intelligent retry logic with exponential backoff to handle transient errors while protecting against wasting the error budget.
+The client retries transient errors with exponential backoff while never wasting the error budget on client errors.
 
 ### Error Classification
-
-All errors are classified into four categories:
 
 | Error Class | HTTP Status | Retry? | Description |
 |------------|-------------|--------|-------------|
@@ -346,161 +139,52 @@ All errors are classified into four categories:
 | **Rate Limit** | 520 | ✅ Yes | Endpoint-specific rate limit exceeded |
 | **Network** | - | ✅ Yes | Connection timeouts, DNS failures, etc. |
 
-### Retry Strategies
+### Retry Strategy
 
-Different error classes use different retry strategies:
+Retries use exponential backoff with ±20% jitter (to avoid thundering herd) and respect `context` cancellation/timeouts:
 
-**Server Errors (5xx)**
-- Max Attempts: 3
-- Initial Backoff: 1s
-- Max Backoff: 10s
-- Multiplier: 2.0x
+- **Server (5xx)**: 3 attempts, 1s → 10s backoff
+- **Rate Limit (520)**: 3 attempts, 5s → 60s backoff (longer wait)
+- **Network**: 3 attempts, 2s → 30s backoff
 
-**Rate Limit (520)**
-- Max Attempts: 3
-- Initial Backoff: 5s (longer wait)
-- Max Backoff: 60s
-- Multiplier: 2.0x
+**Client errors (4xx) are never retried** — retrying can't fix an invalid request and would waste the error budget (risking an IP ban). Errors are surfaced as `client.ErrRetryExhausted` and `client.ErrContextCancelled` for precise handling.
 
-**Network Errors**
-- Max Attempts: 3
-- Initial Backoff: 2s
-- Max Backoff: 30s
-- Multiplier: 2.0x
-
-### Exponential Backoff with Jitter
-
-The client uses exponential backoff with ±20% jitter to prevent thundering herd:
-
-```
-Attempt 1: Immediate
-Attempt 2: Wait ~1s (0.8s - 1.2s with jitter)
-Attempt 3: Wait ~2s (1.6s - 2.4s with jitter)
-```
-
-### Context Cancellation
-
-All retry operations respect context cancellation, allowing you to set timeouts:
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-resp, err := client.Get(ctx, "/v1/status/")
-if errors.Is(err, client.ErrContextCancelled) {
-    // Request cancelled or timed out
-}
-```
-
-### Why NO Retry for 4xx?
-
-**Client errors (4xx) are NEVER retried** because:
-1. They count against your error budget
-2. Retrying won't fix the problem (invalid request)
-3. Wasting error budget can lead to IP ban
-
-### Error Handling Example
-
-```go
-resp, err := client.Get(ctx, "/v1/markets/10000002/orders/")
-if err != nil {
-    if errors.Is(err, client.ErrRetryExhausted) {
-        // All retry attempts failed
-        log.Error().Err(err).Msg("Request failed after retries")
-    } else if errors.Is(err, client.ErrContextCancelled) {
-        // Context timeout or cancellation
-        log.Warn().Msg("Request cancelled")
-    } else {
-        // Other error (e.g., 4xx client error - no retry)
-        log.Error().Err(err).Msg("Request failed")
-    }
-    return
-}
-defer resp.Body.Close()
-```
+→ Error-handling and timeout patterns in context: **[examples/library-usage/](examples/library-usage/)**.
 
 ## Examples
 
-See [examples/](examples/) directory:
+Runnable examples in [examples/](examples/):
 
-- [Library Usage](examples/library-usage/) - Go import example
-- [Service Usage](examples/service-usage/) - HTTP client examples (Python, Node.js, curl)
-- [Pagination](examples/pagination/) - Batch fetching market data
+- **[library-usage/](examples/library-usage/)** — integrated client: config, request, caching, error handling
+- **[cache-usage/](examples/cache-usage/)** — standalone Cache Manager
+- **[ratelimit-usage/](examples/ratelimit-usage/)** — standalone Rate Limit Tracker
+
+*(Phase 2 will add service-mode and pagination examples.)*
 
 ## Development
 
 ```bash
-# Clone repository
 git clone https://github.com/Sternrassler/eve-esi-client.git
 cd eve-esi-client
-
-# Install dependencies
 go mod download
-
-# Run tests
-make test
-
-# Run linter
-make lint
-
-# Start development service
-make run
+make test    # run tests
+make lint    # run linter
+make run     # start development service
 ```
 
 ## Health Checks & Logging
 
-### Health Checks
+### Health Checks (Service Mode)
 
-#### `/health` - Basic Health Check
-Returns `200 OK` when service is running.
-
-```bash
-curl http://localhost:8080/health
-# Response: OK
-```
-
-#### `/ready` - Readiness Check
-Checks critical dependencies (Redis connection, rate limit state).
-
-```bash
-curl http://localhost:8080/ready
-# Response: OK (200) or Service Unavailable (503)
-```
+- `GET /health` — basic liveness, returns `200 OK`.
+- `GET /ready` — readiness; checks Redis connection and rate-limit state (`200` or `503`).
 
 ### Structured Logging
 
-The client uses [zerolog](https://github.com/rs/zerolog) for structured JSON logging.
+The client uses [zerolog](https://github.com/rs/zerolog) for structured JSON logging via the `pkg/logging` package (`logging.Setup` / `logging.NewLogger`).
 
-#### Log Levels
-- **Debug**: Cache operations, request flow, conditional requests
-- **Info**: Successful requests, 304 responses, rate limit updates
-- **Warn**: Rate limit warnings, retry attempts, non-critical errors
-- **Error**: Failed requests, critical rate limit blocks, service errors
-
-#### Configuration
-
-```go
-import "github.com/Sternrassler/eve-esi-client/pkg/logging"
-
-// Setup global logger
-logger := logging.Setup(logging.Config{
-    Level:  logging.LevelInfo,
-    Pretty: false, // Set to true for human-readable console output
-})
-
-// Create component logger
-logger := logging.NewLogger("my-component")
-logger.Info().Str("key", "value").Msg("message")
-```
-
-#### Log Context Fields
-- `endpoint` - ESI endpoint path
-- `status_code` - HTTP status code
-- `duration` - Request duration
-- `error_class` - Error classification
-- `cache_hit` - Cache hit indicator
-- `errors_remaining` - Current ESI error limit
-- `etag` - ETag for conditional requests
+- **Levels**: Debug (cache/request flow), Info (successful requests, 304s, rate-limit updates), Warn (rate-limit warnings, retries), Error (failed requests, critical blocks)
+- **Context fields**: `endpoint`, `status_code`, `duration`, `error_class`, `cache_hit`, `errors_remaining`, `etag`
 
 ## License
 
