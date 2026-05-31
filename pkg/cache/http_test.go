@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -98,6 +99,7 @@ func TestParseExpires(t *testing.T) {
 		headers      http.Header
 		wantWithin   time.Duration // Allow some tolerance for timing
 		expectFuture bool
+		wantErr      bool // malformed-present header must fail loud
 	}{
 		{
 			name: "valid expires header",
@@ -118,8 +120,8 @@ func TestParseExpires(t *testing.T) {
 			headers: http.Header{
 				"Expires": []string{"not a valid date"},
 			},
-			wantWithin:   2 * time.Second,
-			expectFuture: true,
+			// Malformed PRESENT Expires header must fail loud, not silently default.
+			wantErr: true,
 		},
 		{
 			name: "expires in the past",
@@ -133,7 +135,20 @@ func TestParseExpires(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseExpires(tt.headers)
+			got, err := parseExpires(tt.headers)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseExpires() expected error for malformed header, got nil (%v)", got)
+				}
+				if !errors.Is(err, ErrMalformedCacheHeader) {
+					t.Errorf("parseExpires() error = %v, want ErrMalformedCacheHeader", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseExpires() unexpected error: %v", err)
+			}
 
 			if tt.expectFuture && got.Before(now) {
 				t.Errorf("parseExpires() = %v, expected time in the future", got)
@@ -148,8 +163,8 @@ func TestParseExpires(t *testing.T) {
 				}
 			}
 
-			// For default TTL cases
-			if tt.name == "no expires header" || tt.name == "invalid expires header" {
+			// For default TTL cases (absent header)
+			if tt.name == "no expires header" {
 				expected := now.Add(DefaultTTL)
 				diff := got.Sub(expected)
 				if diff < -tt.wantWithin || diff > tt.wantWithin {
@@ -273,6 +288,39 @@ func respWith(headers map[string]string) *http.Response {
 		h.Set(k, v)
 	}
 	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("{}"))}
+}
+
+func TestResponseToEntry_MalformedExpiresFailsLoud(t *testing.T) {
+	_, err := ResponseToEntry(respWith(map[string]string{"Expires": "not a valid date"}))
+	if err == nil {
+		t.Fatal("ResponseToEntry must fail loud on a malformed-present Expires header")
+	}
+	if !errors.Is(err, ErrMalformedCacheHeader) {
+		t.Errorf("error = %v, want ErrMalformedCacheHeader", err)
+	}
+}
+
+func TestResponseToEntry_MalformedMaxAgeFailsLoud(t *testing.T) {
+	_, err := ResponseToEntry(respWith(map[string]string{"Cache-Control": "max-age=not-a-number"}))
+	if err == nil {
+		t.Fatal("ResponseToEntry must fail loud on a malformed Cache-Control max-age")
+	}
+	if !errors.Is(err, ErrMalformedCacheHeader) {
+		t.Errorf("error = %v, want ErrMalformedCacheHeader", err)
+	}
+}
+
+func TestResponseToEntry_AbsentExpiresUsesDefaultTTL(t *testing.T) {
+	// An ABSENT Expires header is legitimate and must NOT error (ESI cache compliance).
+	entry, err := ResponseToEntry(respWith(map[string]string{"Content-Type": "application/json"}))
+	if err != nil {
+		t.Fatalf("absent Expires header must not error: %v", err)
+	}
+	ttl := entry.TTL()
+	// Should be close to DefaultTTL.
+	if ttl < DefaultTTL-5*time.Second || ttl > DefaultTTL+5*time.Second {
+		t.Errorf("absent Expires must default to ~DefaultTTL (%v), got %v", DefaultTTL, ttl)
+	}
 }
 
 func TestResponseToEntry_CacheControlNoStore(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -20,17 +22,28 @@ var (
 
 // Manager handles caching operations with Redis backend.
 type Manager struct {
-	redis *redis.Client
+	redis  *redis.Client
+	logger zerolog.Logger
 }
 
 // NewManager creates a new cache manager with Redis backend.
+// It logs internal failures (e.g. a stale-entry delete that fails) via the
+// package's zerolog logger; use SetLogger to inject a component-scoped logger.
 func NewManager(redisClient *redis.Client) *Manager {
 	if redisClient == nil {
 		panic("redis client cannot be nil")
 	}
 	return &Manager{
-		redis: redisClient,
+		redis:  redisClient,
+		logger: log.With().Str("component", "esi-cache").Logger(),
 	}
+}
+
+// SetLogger injects a logger so internal warnings (e.g. failed stale-entry
+// deletes) are attributed to the caller's logging context instead of being
+// silently discarded.
+func (m *Manager) SetLogger(logger zerolog.Logger) {
+	m.logger = logger
 }
 
 // Get retrieves a cache entry by key.
@@ -55,8 +68,13 @@ func (m *Manager) Get(ctx context.Context, key CacheKey) (*CacheEntry, error) {
 
 	// Check if expired
 	if entry.IsExpired() {
-		// Delete expired entry
-		_ = m.Delete(ctx, key)
+		// Delete expired entry. A failed delete leaves a stale entry behind, so
+		// log it loudly instead of discarding the error silently. The cache result
+		// is still ErrCacheMiss (the entry is expired regardless).
+		if derr := m.Delete(ctx, key); derr != nil {
+			m.logger.Warn().Err(derr).Str("key", cacheKey).
+				Msg("Failed to delete expired cache entry; stale entry may remain")
+		}
 		return nil, ErrCacheMiss
 	}
 

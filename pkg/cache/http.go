@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,12 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
-	_ = resp.Body.Close()
+	if cerr := resp.Body.Close(); cerr != nil {
+		// A close failure after a successful read signals a broken connection/reader;
+		// surface it rather than silently discarding it so the response is not cached
+		// under a false assumption of integrity.
+		return nil, fmt.Errorf("close response body: %w", cerr)
+	}
 
 	// Restore body for caller
 	resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -42,7 +48,12 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 	}
 
 	// Cache-Control hat Vorrang vor Expires (no-store/no-cache → nicht cachen; max-age → TTL).
-	entry.Expires = expiryFromHeaders(resp.Header)
+	// Ein MALFORMED Header ist fail-loud (Fehler); ein ABSENTER Header nutzt legitim DefaultTTL.
+	expires, err := expiryFromHeaders(resp.Header)
+	if err != nil {
+		return nil, err
+	}
+	entry.Expires = expires
 
 	// Parse Last-Modified header
 	if lastModStr := resp.Header.Get("Last-Modified"); lastModStr != "" {
@@ -54,22 +65,34 @@ func ResponseToEntry(resp *http.Response) (*CacheEntry, error) {
 	return entry, nil
 }
 
+// ErrMalformedCacheHeader signals that a cache-relevant header was PRESENT but
+// could not be parsed. A malformed header must fail loud (the caller decides how
+// to proceed) instead of being silently replaced by DefaultTTL, which would break
+// the cache contract without any signal. An ABSENT header is not an error and
+// legitimately uses DefaultTTL (ESI cache compliance).
+var ErrMalformedCacheHeader = errors.New("malformed cache header")
+
 // expiryFromHeaders bestimmt die Ablaufzeit aus Cache-Control (Vorrang) oder Expires.
-func expiryFromHeaders(headers http.Header) time.Time {
+// Ein vorhandener, aber unparsbarer Header (max-age, Expires) ergibt ErrMalformedCacheHeader.
+func expiryFromHeaders(headers http.Header) (time.Time, error) {
 	cc := strings.ToLower(headers.Get("Cache-Control"))
 	if cc != "" {
 		if strings.Contains(cc, "no-store") || strings.Contains(cc, "no-cache") {
-			return time.Now() // TTL 0 → wird nicht gecacht
+			return time.Now(), nil // TTL 0 → wird nicht gecacht
 		}
 		for _, part := range strings.Split(cc, ",") {
 			part = strings.TrimSpace(part)
 			if strings.HasPrefix(part, "max-age=") {
-				if secs, err := strconv.Atoi(strings.TrimPrefix(part, "max-age=")); err == nil {
-					if secs <= 0 {
-						return time.Now()
-					}
-					return time.Now().Add(time.Duration(secs) * time.Second)
+				raw := strings.TrimPrefix(part, "max-age=")
+				secs, err := strconv.Atoi(raw)
+				if err != nil {
+					return time.Time{}, fmt.Errorf("%w: Cache-Control max-age=%q: %v",
+						ErrMalformedCacheHeader, raw, err)
 				}
+				if secs <= 0 {
+					return time.Now(), nil
+				}
+				return time.Now().Add(time.Duration(secs) * time.Second), nil
 			}
 		}
 	}
@@ -77,27 +100,28 @@ func expiryFromHeaders(headers http.Header) time.Time {
 }
 
 // parseExpires parses the Expires header from HTTP headers.
-// Returns the parsed expiration time, or current time + DefaultTTL if parsing fails.
-func parseExpires(headers http.Header) time.Time {
+// Returns current time + DefaultTTL when the header is ABSENT (legitimate ESI default).
+// Returns ErrMalformedCacheHeader when the header is PRESENT but unparsable (fail-loud).
+func parseExpires(headers http.Header) (time.Time, error) {
 	expiresStr := headers.Get("Expires")
 	if expiresStr == "" {
-		// No expires header - use default TTL
-		return time.Now().Add(DefaultTTL)
+		// No expires header - use default TTL (legitimate, ESI cache compliance)
+		return time.Now().Add(DefaultTTL), nil
 	}
 
 	expires, err := http.ParseTime(expiresStr)
 	if err != nil {
-		// Failed to parse expires header - use default TTL
-		return time.Now().Add(DefaultTTL)
+		// Header present but malformed - fail loud instead of silently substituting DefaultTTL
+		return time.Time{}, fmt.Errorf("%w: Expires=%q: %v", ErrMalformedCacheHeader, expiresStr, err)
 	}
 
 	// Validate that TTL is not negative
 	if expires.Before(time.Now()) {
 		// Already expired - use minimal TTL
-		return time.Now()
+		return time.Now(), nil
 	}
 
-	return expires
+	return expires, nil
 }
 
 // ShouldMakeConditionalRequest determines if we should add conditional
