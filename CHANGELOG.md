@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-31
+
 ### Removed
 - **Prometheus metrics feature** — `pkg/metrics`, the promauto instrumentation across `pkg/cache`, `pkg/client`, `pkg/ratelimit`, the `/metrics` endpoint, monitoring docs, and the `prometheus/client_golang` dependency. Observability now relies on structured logging.
 - **Architecture Decision Records** and their enforcement (pre-commit/CI ADR checks, `check-adr*` scripts, ADR policy in copilot-instructions).
@@ -24,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests for `pkg/pagination` (batch fetcher: single/multi-page, partial failure, config clamping, context cancellation).
 
 ### Fixed
+- **Silent fallbacks made fail-loud (#27).** Errors that were previously swallowed behind degraded defaults are now propagated or logged: the retry path returns a clear error instead of silently reusing a consumed body when `GetBody` fails; a malformed (present-but-unparsable) `max-age`/`Expires` cache header returns `ErrMalformedCacheHeader` instead of silently substituting the default TTL (an absent header still legitimately uses the default); the rate-limit tracker returns `ErrIncompleteState` on a partial Redis read instead of assuming a healthy default; cache delete-on-expiry and response-body `Close()` errors are no longer discarded silently.
 - CI builds on Go 1.25 and runs `golangci-lint` v2 (matching `.golangci.yml`); fixed all lint findings and `gofmt`.
 
 ## [0.4.0] - 2026-05-25
