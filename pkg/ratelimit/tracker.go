@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
+
+// ErrIncompleteState signals that the rate limit state in Redis is partial:
+// some keys are present while others are missing. The state cannot be trusted,
+// so callers must treat it as an error rather than assuming a healthy default.
+var ErrIncompleteState = errors.New("incomplete rate limit state in redis")
 
 // decrIfExists dekrementiert errors_remaining nur, wenn der Key existiert
 // (verhindert, dass ein fehlender Key fälschlich auf -1 gesetzt wird).
@@ -43,26 +49,33 @@ func (t *Tracker) RecordError(ctx context.Context) error {
 }
 
 // GetState retrieves the current rate limit state from Redis.
-// Returns a default healthy state if no data exists in Redis.
+// Returns a default healthy state only if ALL state keys are absent (a fresh
+// tracker). Each read is checked independently: if some keys are present but
+// others are missing, or a read fails, the state is incomplete and we surface an
+// error instead of silently assuming a healthy default (e.g. 100 errors remaining)
+// that could mask a real critical state.
 func (t *Tracker) GetState(ctx context.Context) (*RateLimitState, error) {
-	// Fetch all state fields from Redis
+	// Fetch all state fields from Redis, tracking each key's presence independently.
 	errorsRemaining, err := t.redis.Get(ctx, RedisKeyErrorsRemaining).Int()
-	if err != nil && err != redis.Nil {
+	errorsMissing := errors.Is(err, redis.Nil)
+	if err != nil && !errorsMissing {
 		return nil, fmt.Errorf("get errors remaining: %w", err)
 	}
 
 	resetTimestamp, err := t.redis.Get(ctx, RedisKeyResetTimestamp).Int64()
-	if err != nil && err != redis.Nil {
+	resetMissing := errors.Is(err, redis.Nil)
+	if err != nil && !resetMissing {
 		return nil, fmt.Errorf("get reset timestamp: %w", err)
 	}
 
 	lastUpdateStr, err := t.redis.Get(ctx, RedisKeyLastUpdate).Result()
-	if err != nil && err != redis.Nil {
+	lastUpdateMissing := errors.Is(err, redis.Nil)
+	if err != nil && !lastUpdateMissing {
 		return nil, fmt.Errorf("get last update: %w", err)
 	}
 
-	// If no state exists in Redis, return default healthy state
-	if err == redis.Nil {
+	// If NO state exists in Redis (all keys absent), return default healthy state.
+	if errorsMissing && resetMissing && lastUpdateMissing {
 		t.logger.Debug().Msg("No rate limit state in Redis, returning default healthy state")
 		return &RateLimitState{
 			ErrorsRemaining: 100, // Assume healthy until we get real data
@@ -70,6 +83,13 @@ func (t *Tracker) GetState(ctx context.Context) (*RateLimitState, error) {
 			LastUpdate:      time.Now(),
 			IsHealthy:       true,
 		}, nil
+	}
+
+	// Partial state: some keys present, others absent. Assuming a default for the
+	// missing fields could mask a critical error budget, so fail loud.
+	if errorsMissing || resetMissing || lastUpdateMissing {
+		return nil, fmt.Errorf("%w: errors_remaining_present=%t reset_present=%t last_update_present=%t",
+			ErrIncompleteState, !errorsMissing, !resetMissing, !lastUpdateMissing)
 	}
 
 	var lastUpdate time.Time

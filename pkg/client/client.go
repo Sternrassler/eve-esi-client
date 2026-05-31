@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -126,6 +127,7 @@ func New(cfg Config) (*Client, error) {
 
 	// Create cache manager
 	cacheManager := cache.NewManager(cfg.Redis)
+	cacheManager.SetLogger(logger)
 
 	return &Client{
 		httpClient: &http.Client{
@@ -216,7 +218,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// vorhanden ist, einmalig puffern und GetBody setzen.
 	if req.Body != nil && req.GetBody == nil {
 		bodyBytes, berr := io.ReadAll(req.Body)
-		_ = req.Body.Close()
+		if cerr := req.Body.Close(); cerr != nil {
+			c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Failed to close request body after buffering")
+		}
 		if berr != nil {
 			return nil, fmt.Errorf("buffer request body: %w", berr)
 		}
@@ -228,11 +232,21 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 	// Wrap the HTTP request in retry logic
 	retryErr := retryWithBackoff(ctx, func() error {
-		// Body vor jedem Versuch zurücksetzen (sonst nach Versuch 1 verbraucht)
+		// Body vor jedem Versuch zurücksetzen (sonst nach Versuch 1 verbraucht).
+		// Schlägt GetBody fehl, darf NICHT still mit dem konsumierten/stale Body
+		// weitergemacht werden — der Versuch wird mit klarem Fehler abgebrochen.
 		if req.GetBody != nil {
-			if body, gerr := req.GetBody(); gerr == nil {
-				req.Body = body
+			body, gerr := req.GetBody()
+			if gerr != nil {
+				c.logger.Error().Err(gerr).Str("endpoint", endpoint).
+					Msg("Failed to rewind request body for retry")
+				// Body is consumed/broken — retrying is futile. Mark non-retriable so
+				// retryWithBackoff aborts immediately and surfaces the error.
+				errClass = ErrorClassClient
+				lastErr = fmt.Errorf("rewind request body: %w", gerr)
+				return lastErr
 			}
+			req.Body = body
 		}
 
 		// Execute the HTTP request
@@ -283,7 +297,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 					ErrorClass: errClass,
 					Message:    resp.Status,
 				}
-				_ = resp.Body.Close() // Close the body before retrying
+				if cerr := resp.Body.Close(); cerr != nil { // Close the body before retrying
+					c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Failed to close response body before retry")
+				}
 				return lastErr
 			}
 
@@ -301,7 +317,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	// Handle retry exhaustion
 	if retryErr != nil {
 		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
+			if cerr := resp.Body.Close(); cerr != nil {
+				c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Failed to close response body after retry exhaustion")
+			}
 		}
 		return nil, retryErr
 	}
@@ -320,7 +338,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		}
 
 		// Return cached response
-		_ = resp.Body.Close()
+		if cerr := resp.Body.Close(); cerr != nil {
+			c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Failed to close 304 response body")
+		}
 		return c.cacheEntryToResponse(cachedEntry), nil
 	}
 
@@ -328,7 +348,14 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode == http.StatusOK {
 		entry, err := cache.ResponseToEntry(resp)
 		if err != nil {
-			c.logger.Warn().Err(err).Msg("Failed to create cache entry")
+			// Response is still returned to the caller; it is just not cached.
+			// A malformed cache header (fail-loud signal from the cache layer) is
+			// called out explicitly so the uncached outcome is not silent.
+			logEvent := c.logger.Warn().Err(err).Str("endpoint", endpoint)
+			if errors.Is(err, cache.ErrMalformedCacheHeader) {
+				logEvent = logEvent.Bool("malformed_cache_header", true)
+			}
+			logEvent.Msg("Failed to create cache entry; response returned uncached")
 		} else if entry.TTL() > 0 {
 			if err := c.cache.Set(ctx, cacheKey, entry); err != nil {
 				c.logger.Warn().Err(err).Msg("Failed to cache response")
@@ -408,7 +435,11 @@ func (c *Client) FetchPage(ctx context.Context, endpoint string, pageNum int) ([
 	if err != nil {
 		return nil, 0, fmt.Errorf("GET request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			c.logger.Warn().Err(cerr).Str("endpoint", fullEndpoint).Msg("Failed to close response body")
+		}
+	}()
 
 	// Check status
 	if resp.StatusCode != http.StatusOK {

@@ -761,6 +761,13 @@ func TestDo_RetryResendsBody(t *testing.T) {
 	if err := rc.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("Redis not available: %v", err)
 	}
+	// Clear any partial rate-limit state left over from other tests on this DB.
+	// GetState is now fail-loud on a partial state, so a stray errors_remaining
+	// without its siblings would block this request before any retry happens.
+	_ = rc.Del(context.Background(),
+		"esi:rate_limit:errors_remaining",
+		"esi:rate_limit:reset_timestamp",
+		"esi:rate_limit:last_update").Err()
 	cfg := DefaultConfig(rc, "Test/1.0 (t@e.x)")
 	c, err := New(cfg)
 	if err != nil {

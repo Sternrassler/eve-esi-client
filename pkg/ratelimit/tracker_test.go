@@ -2,6 +2,8 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"testing"
@@ -266,6 +268,11 @@ func TestShouldAllowRequest_ThrottleRespectsContext(t *testing.T) {
 	tr := NewTracker(rc, zerolog.Nop())
 	rc.Set(ctx, RedisKeyErrorsRemaining, 10, 0) // warning state (5<=10<20) → würde throtteln
 	rc.Set(ctx, RedisKeyResetTimestamp, time.Now().Add(60*time.Second).Unix(), 0)
+	// Complete state: last_update muss präsent sein, sonst liefert GetState jetzt
+	// ErrIncompleteState (fail-loud) und der Throttle-Pfad würde gar nicht erreicht.
+	if lu, err := json.Marshal(time.Now()); err == nil {
+		rc.Set(ctx, RedisKeyLastUpdate, lu, 0)
+	}
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
 	start := time.Now()
@@ -275,6 +282,42 @@ func TestShouldAllowRequest_ThrottleRespectsContext(t *testing.T) {
 	}
 	if allowed || err == nil {
 		t.Errorf("erwartet allowed=false,err!=nil; got %v,%v", allowed, err)
+	}
+}
+
+func TestGetState_AllKeysAbsentReturnsDefaultHealthy(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	st, err := tr.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState with no keys must not error: %v", err)
+	}
+	if st.ErrorsRemaining != 100 || !st.IsHealthy {
+		t.Errorf("expected default healthy state (100, healthy), got %d healthy=%v",
+			st.ErrorsRemaining, st.IsHealthy)
+	}
+}
+
+func TestGetState_PartialStateFailsLoud(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	// Only errors_remaining present (e.g. set to a CRITICAL value); the other keys
+	// are missing. The old code would only check the last read's redis.Nil and could
+	// assume a healthy default, masking this critical state. Now it must fail loud.
+	rc.Set(ctx, RedisKeyErrorsRemaining, 2, 0)
+
+	_, err := tr.GetState(ctx)
+	if err == nil {
+		t.Fatal("GetState must fail loud on partial state, got nil error")
+	}
+	if !errors.Is(err, ErrIncompleteState) {
+		t.Errorf("error = %v, want ErrIncompleteState", err)
 	}
 }
 
