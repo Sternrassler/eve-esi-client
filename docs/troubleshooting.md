@@ -107,7 +107,7 @@ for _, endpoint := range endpoints {
 **Solution**:
 
 1. Check the group state: `redis-cli get "esi:ratelimit:group:<group>"` (`blocked_until`, `remaining`).
-2. Reduce request volume for that group or spread it over the 15m window; rely on conditional requests (3xx costs 1 token instead of 2).
+2. Reduce request volume for that group or spread it over the 15m window; fresh cache hits cost no tokens at all — recompute within the `Expires` window where possible.
 3. Long blocks: back off until `Retry-After` has passed — retrying earlier only wastes attempts.
 
 ### Constant rate limit warnings
