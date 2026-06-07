@@ -111,7 +111,7 @@ Maximum requests per second to ESI. This is a **soft limit** for your applicatio
 cfg.RateLimit = 10  // Max 10 requests/second
 ```
 
-**Note**: ESI uses error-based rate limiting (not request-based), but this setting helps prevent hammering the API.
+**Note**: ESI enforces two server-side systems — group-based token buckets (`X-Ratelimit-*`, 429) on migrated routes and legacy error-based limiting (`X-ESI-Error-Limit-*`, 420) elsewhere. This client-side setting additionally helps prevent hammering the API.
 
 ### ErrorThreshold
 

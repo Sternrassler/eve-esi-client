@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ESI-Gruppen-Rate-Limiting (`X-Ratelimit-*`) — Adoption des neuen CCP-Schemas** (Rollout seit Okt. 2025, Doku: developers.eveonline.com → ESI Rate Limiting). Neuer `ratelimit.GroupTracker`: parst `X-Ratelimit-Group/-Limit/-Remaining` (Format `3600/15m`) aus jeder Antwort, lernt das Endpoint→Gruppe-Mapping (Redis, 24 h TTL) und hält per-Gruppe-State (TTL = Window + 60 s). Gating pro Request-Versuch: bei knappem Token-Budget (< max(5 % des Limits, 10)) 1 s Drossel; nach **429** wird die Gruppe bis `Retry-After` gesperrt — Wartezeiten ≤ 60 s sitzt das Gate inline aus (auch zwischen Retry-Versuchen), längere Sperren schlagen schnell mit `GroupRateLimitedError` fehl.
+- **429-Handling im Client:** 429 wird als `ErrorClassRateLimit` klassifiziert (vorher 4xx-Client → kein Retry) und retried; der Folgeversuch wartet die `Retry-After`-Sperre im Gruppen-Gate ab. 429 belastet das Legacy-Error-Budget **nicht** mehr (kein `RecordError`-Decrement — gehört laut Doku zum neuen Schema).
+
+### Changed
+
+- Doku (README, configuration, troubleshooting) beschreibt jetzt die **Koexistenz beider Systeme**: Gruppen-Token-Buckets auf migrierten Routen (z. B. `market-order: 12000/15m`, `routes: 3600/15m`), Legacy-`X-ESI-Error-Limit-*` (100 Fehler/min, 420) auf noch nicht migrierten Routen (z. B. `universe/*`, `markets/history`). Beide Tracker laufen parallel; Legacy bleibt aktiv und wird auf Legacy-Routen weiter von Headern gefüttert.
+
 ## [0.5.1] - 2026-06-07
 
 ### Fixed

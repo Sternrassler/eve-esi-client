@@ -98,7 +98,8 @@ Full reference: **[docs/configuration.md](docs/configuration.md)**.
 
 This client strictly follows ESI rules to prevent bans:
 
-✅ **Error Rate Limiting**: Tracks `X-ESI-Error-Limit-Remain` header  
+✅ **Group Rate Limiting**: Tracks `X-Ratelimit-*` headers + honors `Retry-After` on 429  
+✅ **Error Rate Limiting**: Tracks `X-ESI-Error-Limit-Remain` header (legacy routes)  
 ✅ **Cache Respect**: Always honors `expires` header  
 ✅ **Conditional Requests**: Uses `If-None-Match` (ETag)  
 ✅ **Spread Load**: Rate limiting prevents spiky traffic  
@@ -106,9 +107,25 @@ This client strictly follows ESI rules to prevent bans:
 
 ## Rate Limiting
 
-ESI uses **error rate limiting** instead of request rate limiting. The client automatically monitors ESI's error limit headers to prevent IP bans.
+ESI runs **two coexisting rate limit systems** (rollout of the new system started October 2025); the client handles both automatically:
 
-The tracker watches `X-ESI-Error-Limit-Remain` / `X-ESI-Error-Limit-Reset` and operates in three states:
+### 1. Group rate limiting (`X-Ratelimit-*`, migrated routes)
+
+Token buckets per **route group × consumer** (`ApplicationID:CharacterID` for authed, source IP otherwise) with a floating window (`X-Ratelimit-Limit: 3600/15m`). Token costs: 2xx = 2, 3xx = 1 (conditional requests pay off), 4xx = 5, 5xx = 0. Exceeding the bucket returns **429 with `Retry-After`**.
+
+The `GroupTracker` learns each endpoint's group from response headers, shares per-group state via Redis and gates requests:
+
+| Condition | Behavior |
+|-----------|----------|
+| Budget healthy | Normal operation |
+| `Remaining` < max(5 % of limit, 10) | Requests throttled (1s delay) |
+| 429 received | Group blocked until `Retry-After`; waits up to 60s inline, longer blocks fail fast with `GroupRateLimitedError` |
+
+Docs: [ESI rate limiting](https://developers.eveonline.com/docs/services/esi/rate-limiting/).
+
+### 2. Legacy error rate limiting (`X-ESI-Error-Limit-*`, not-yet-migrated routes)
+
+100 non-2xx/3xx per minute, enforced via 420. The tracker watches `X-ESI-Error-Limit-Remain` / `-Reset` and operates in three states:
 
 | State | Errors Remaining | Behavior |
 |-------|-----------------|----------|
@@ -116,7 +133,9 @@ The tracker watches `X-ESI-Error-Limit-Remain` / `X-ESI-Error-Limit-Reset` and o
 | 🟡 **Warning** | 20-49 | Requests throttled (1s delay between calls) |
 | 🔴 **Critical** | < 5 | All requests blocked until reset |
 
-State is shared across all client instances via Redis, ensuring coordinated behavior in multi-instance deployments. **Exceeding the error limit results in a permanent IP ban** — the integrated client handles this for you; for standalone use see **[examples/ratelimit-usage/](examples/ratelimit-usage/)**.
+A state whose 60s window has passed is treated as healthy and all state keys carry TTLs — stale low values cannot throttle indefinitely.
+
+State for both systems is shared across all client instances via Redis, ensuring coordinated behavior in multi-instance deployments. For standalone use see **[examples/ratelimit-usage/](examples/ratelimit-usage/)**.
 
 ## Error Handling & Retry Logic
 
@@ -126,9 +145,9 @@ The client retries transient errors with exponential backoff while never wasting
 
 | Error Class | HTTP Status | Retry? | Description |
 |------------|-------------|--------|-------------|
-| **Client** | 4xx | ❌ No | Client errors (invalid request, not found, etc.) |
+| **Client** | 4xx (except 429) | ❌ No | Client errors (invalid request, not found, etc.) |
 | **Server** | 5xx | ✅ Yes | ESI server errors (temporary issues) |
-| **Rate Limit** | 520 | ✅ Yes | Endpoint-specific rate limit exceeded |
+| **Rate Limit** | 429, 520 | ✅ Yes | Group rate limit (429: retry waits for `Retry-After` via the group gate) / endpoint-specific limit (520) |
 | **Network** | - | ✅ Yes | Connection timeouts, DNS failures, etc. |
 
 ### Retry Strategy

@@ -229,6 +229,9 @@ func setupTestRedis(t *testing.T) *redis.Client {
 		t.Skipf("Redis not available: %v", err)
 	}
 	c.Del(ctx, RedisKeyErrorsRemaining, RedisKeyResetTimestamp, RedisKeyLastUpdate)
+	if keys, err := c.Keys(ctx, "esi:ratelimit:*").Result(); err == nil && len(keys) > 0 {
+		c.Del(ctx, keys...)
+	}
 	return c
 }
 

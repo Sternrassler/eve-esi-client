@@ -98,6 +98,18 @@ for _, endpoint := range endpoints {
 
 ## Rate Limiting
 
+### 429 / "group rate limit gate" errors
+
+**Symptom**: Requests fail with `GroupRateLimitedError` ("esi rate limit group … blocked"), or logs show "ESI group rate limited (429)".
+
+**Cause**: A route group's token bucket (`X-Ratelimit-*`, e.g. `market-order: 12000/15m`) is exhausted. ESI answers 429 with `Retry-After`; the client waits inline for blocks up to 60s and fails fast on longer ones.
+
+**Solution**:
+
+1. Check the group state: `redis-cli get "esi:ratelimit:group:<group>"` (`blocked_until`, `remaining`).
+2. Reduce request volume for that group or spread it over the 15m window; rely on conditional requests (3xx costs 1 token instead of 2).
+3. Long blocks: back off until `Retry-After` has passed — retrying earlier only wastes attempts.
+
 ### Constant rate limit warnings
 
 **Symptom**: Frequent "ESI error limit warning" log messages.
