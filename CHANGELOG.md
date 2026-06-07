@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-07
+
 ### Added
 
 - **ESI-Gruppen-Rate-Limiting (`X-Ratelimit-*`) — Adoption des neuen CCP-Schemas** (Rollout seit Okt. 2025, Doku: developers.eveonline.com → ESI Rate Limiting). Neuer `ratelimit.GroupTracker`: parst `X-Ratelimit-Group/-Limit/-Remaining` (Format `3600/15m`) aus jeder Antwort, lernt das Endpoint→Gruppe-Mapping (Redis, 24 h TTL) und hält per-Gruppe-State (TTL = Window + 60 s). Gating pro Request-Versuch: bei knappem Token-Budget (< max(5 % des Limits, 10)) 1 s Drossel; nach **429** wird die Gruppe bis `Retry-After` gesperrt — Wartezeiten ≤ 60 s sitzt das Gate inline aus (auch zwischen Retry-Versuchen), längere Sperren schlagen schnell mit `GroupRateLimitedError` fehl.
