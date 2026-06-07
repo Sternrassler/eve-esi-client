@@ -172,31 +172,32 @@ ESI compliance requires respecting cache expiration headers. Setting to `false` 
 
 ### Cache Behavior
 
-The client implements a two-tier caching strategy:
+The client caches GET responses in Redis and serves them as long as they are fresh:
 
-1. **Redis Cache** (primary)
-   - Stores full response body
-   - Respects ESI `Expires` header
+1. **Redis Cache**
+   - Stores full response body + headers (incl. ETag)
+   - Respects ESI `Expires` header (entry TTL = freshness window)
    - Shared across all client instances
 
-2. **Conditional Requests**
-   - Uses `If-None-Match` header with ETag
-   - Receives `304 Not Modified` when cache is valid
-   - Updates TTL from new `Expires` header
+2. **Fresh-Serve**
+   - A fresh entry (within `Expires`) is returned **without any network request** — no latency, no rate-limit token cost
+   - Expired entries are evicted; the next request fetches fresh data
 
 **Cache Flow:**
 
 ```
-Request → Check Redis Cache
+GET Request → Check Redis Cache
   ↓
-Cache Hit?
-  ↓ Yes                    ↓ No
-Make conditional request   Make normal request
-  ↓                        ↓
-304 Not Modified?          Store in cache
-  ↓ Yes      ↓ No           ↓
-Return cached | Update cache | Return response
+Fresh entry?
+  ↓ Yes                       ↓ No (missing/expired)
+Serve from cache (no HTTP)    Make ESI request
+                              ↓
+                              Store in cache (TTL = Expires)
+                              ↓
+                              Return response
 ```
+
+*Hinweis:* Stale-with-ETag-Revalidierung (abgelaufene Einträge per `If-None-Match` → `304` auffrischen statt voll zu laden) ist eine mögliche künftige Erweiterung; ETags werden dafür bereits mitgespeichert.
 
 ## Retry Behavior
 

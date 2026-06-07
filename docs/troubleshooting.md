@@ -199,22 +199,13 @@ for _, endpoint := range endpoints {
    {"endpoint":"/v1/status/","ttl":299.5,"message":"Cached response"}
    ```
 
-### 304 Not Modified but still downloading data
+### Unexpected 304 errors
 
-**Symptom**: Seeing 304 responses but bandwidth usage is high.
+**Symptom**: Requests fail with `unexpected 304 from ESI without conditional request`.
 
-**Cause**: This is normal - 304 means server validated, but client must have cached data.
+**Cause**: The client serves fresh cache entries directly and sends no conditional requests — a 304 from ESI is therefore a protocol violation (or a misbehaving proxy) and is surfaced fail-loud instead of returning empty data.
 
-**How it works**:
-```
-1. Client has cached data with ETag "abc123"
-2. Client sends request with If-None-Match: "abc123"
-3. Server checks, data unchanged
-4. Server returns 304 Not Modified (small response, ~200 bytes)
-5. Client returns cached data to user (from Redis)
-```
-
-**Bandwidth saved**: Instead of 100KB response, client receives 200 byte response.
+**Solution**: Check for intermediaries that inject `If-None-Match`/`If-Modified-Since` headers into outgoing requests.
 
 ### Cache not expiring
 

@@ -124,21 +124,21 @@ func TestIntegration_FullRequestFlow(t *testing.T) {
 	// Wait for cache to be written
 	time.Sleep(200 * time.Millisecond)
 
-	// Request 2: Should use cache and make conditional request
-	t.Log("Request 2: Conditional request")
+	// Request 2: Eintrag ist frisch → Fresh-Serve aus dem Cache, kein
+	// weiterer Request und kein Conditional Request.
+	t.Log("Request 2: Fresh cache hit - served without revalidation")
 	resp2, err := client.Get(ctx, "/test/endpoint")
 	if err != nil {
 		t.Fatalf("Request 2 failed: %v", err)
 	}
 	defer resp2.Body.Close()
 
-	// Should have made second request with conditional headers
-	if requestsMade != 2 {
-		t.Errorf("After request 2: requestsMade = %d, want 2", requestsMade)
+	if requestsMade != 1 {
+		t.Errorf("After request 2: requestsMade = %d, want 1 (fresh hit must not revalidate)", requestsMade)
 	}
 
-	if conditionalRequests != 1 {
-		t.Errorf("conditionalRequests = %d, want 1", conditionalRequests)
+	if conditionalRequests != 0 {
+		t.Errorf("conditionalRequests = %d, want 0 (fresh hit must not revalidate)", conditionalRequests)
 	}
 
 	// Verify cache contains the entry
