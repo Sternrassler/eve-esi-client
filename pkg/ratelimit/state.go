@@ -55,6 +55,14 @@ func (s *RateLimitState) IsStale(maxAge time.Duration) bool {
 	return time.Since(s.LastUpdate) > maxAge
 }
 
+// IsExpired reports whether the error-limit window this state was captured in
+// has already passed. ESI resets the error budget every 60 seconds — a state
+// whose ResetAt lies in the past no longer reflects the live budget and must
+// not be used for blocking/throttling decisions.
+func (s *RateLimitState) IsExpired() bool {
+	return time.Now().After(s.ResetAt)
+}
+
 // NeedsCriticalBlock returns true if requests should be blocked due to critical error limit.
 func (s *RateLimitState) NeedsCriticalBlock() bool {
 	return s.ErrorsRemaining < ErrorThresholdCritical
