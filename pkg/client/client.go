@@ -34,7 +34,7 @@ const (
 	// ErrorClassServer represents 5xx server errors.
 	ErrorClassServer ErrorClass = "server"
 
-	// ErrorClassRateLimit represents 520 rate limit errors.
+	// ErrorClassRateLimit represents rate limit errors (429 group rate limit, 520).
 	ErrorClassRateLimit ErrorClass = "rate_limit"
 
 	// ErrorClassNetwork represents network/timeout errors.
@@ -43,14 +43,15 @@ const (
 
 // Client is the main ESI client.
 type Client struct {
-	httpClient  *http.Client
-	redis       *redis.Client
-	rateLimiter *ratelimit.Tracker
-	cache       *cache.Manager
-	config      Config
-	logger      zerolog.Logger
-	limiter     *rate.Limiter // req/s Token-Bucket (in-memory)
-	sem         chan struct{} // Concurrency-Semaphore (in-memory)
+	httpClient   *http.Client
+	redis        *redis.Client
+	rateLimiter  *ratelimit.Tracker      // Legacy-Error-Limit (X-ESI-Error-Limit-*, nicht migrierte Routen)
+	groupLimiter *ratelimit.GroupTracker // Gruppen-Rate-Limit (X-Ratelimit-*, neue Routen)
+	cache        *cache.Manager
+	config       Config
+	logger       zerolog.Logger
+	limiter      *rate.Limiter // req/s Token-Bucket (in-memory)
+	sem          chan struct{} // Concurrency-Semaphore (in-memory)
 }
 
 // Config holds the client configuration.
@@ -133,13 +134,14 @@ func New(cfg Config) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		redis:       cfg.Redis,
-		rateLimiter: rateLimiter,
-		cache:       cacheManager,
-		config:      cfg,
-		logger:      logger,
-		limiter:     rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateLimit),
-		sem:         make(chan struct{}, cfg.MaxConcurrency),
+		redis:        cfg.Redis,
+		rateLimiter:  rateLimiter,
+		groupLimiter: ratelimit.NewGroupTracker(cfg.Redis, logger),
+		cache:        cacheManager,
+		config:       cfg,
+		logger:       logger,
+		limiter:      rate.NewLimiter(rate.Limit(cfg.RateLimit), cfg.RateLimit),
+		sem:          make(chan struct{}, cfg.MaxConcurrency),
 	}, nil
 }
 
@@ -232,6 +234,19 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 	// Wrap the HTTP request in retry logic
 	retryErr := retryWithBackoff(ctx, func() error {
+		// Gruppen-Gate (X-Ratelimit-*) pro Versuch: respektiert eine aktive
+		// 429-Sperre (Retry-After) auch ZWISCHEN Retry-Versuchen und bremst,
+		// wenn das Token-Budget der Gruppe zur Neige geht. Lange Sperren
+		// (> maxBlockWait) kommen als GroupRateLimitedError zurück — weitere
+		// Versuche wären zwecklos, deshalb als nicht-retriabel klassifiziert.
+		if gerr := c.groupLimiter.Gate(ctx, endpoint); gerr != nil {
+			c.logger.Warn().Err(gerr).Str("endpoint", endpoint).
+				Msg("Request blocked by group rate limiter")
+			errClass = ErrorClassClient
+			lastErr = fmt.Errorf("group rate limit gate: %w", gerr)
+			return lastErr
+		}
+
 		// Body vor jedem Versuch zurücksetzen (sonst nach Versuch 1 verbraucht).
 		// Schlägt GetBody fehl, darf NICHT still mit dem konsumierten/stale Body
 		// weitergemacht werden — der Versuch wird mit klarem Fehler abgebrochen.
@@ -267,6 +282,12 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			c.logger.Warn().Err(uerr).Msg("Failed to update rate limit from headers")
 		}
 
+		// Update Gruppen-Rate-Limit (X-Ratelimit-*; migrierte Routen). Lernt
+		// zugleich das Endpoint→Gruppe-Mapping für das Gate.
+		if _, gerr := c.groupLimiter.Update(ctx, endpoint, resp.StatusCode, resp.Header); gerr != nil {
+			c.logger.Warn().Err(gerr).Msg("Failed to update group rate limit state")
+		}
+
 		// Handle 304 Not Modified (not an error, return success)
 		if resp.StatusCode == http.StatusNotModified {
 			return nil
@@ -277,7 +298,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 			errClass = c.classifyError(resp, nil)
 			// Optimistischer lokaler Decrement nur, wenn ESI keinen Header lieferte
 			// (sonst ist der Header bereits autoritativ; DECR würde doppelt zählen).
-			if !headerApplied {
+			// 429 gehört zum NEUEN Gruppen-Rate-Limit (oben via groupLimiter.Update
+			// verarbeitet, inkl. Retry-After-Sperre) und zählt laut Doku nicht aufs
+			// Legacy-Error-Budget — kein RecordError.
+			if !headerApplied && resp.StatusCode != http.StatusTooManyRequests {
 				if rerr := c.rateLimiter.RecordError(ctx); rerr != nil {
 					c.logger.Warn().Err(rerr).Msg("Failed to record error in rate limiter")
 				}
@@ -379,6 +403,11 @@ func (c *Client) classifyError(resp *http.Response, err error) ErrorClass {
 	}
 
 	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// Gruppen-Rate-Limit (X-Ratelimit-*): retriabel — der nächste Versuch
+		// läuft durchs Gruppen-Gate und wartet dort die Retry-After-Sperre ab.
+		c.logger.Debug().Str("class", string(ErrorClassRateLimit)).Msg("Error classified")
+		return ErrorClassRateLimit
 	case resp.StatusCode == 520:
 		c.logger.Debug().Str("class", string(ErrorClassRateLimit)).Msg("Error classified")
 		return ErrorClassRateLimit

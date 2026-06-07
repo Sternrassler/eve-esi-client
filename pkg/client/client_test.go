@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sternrassler/eve-esi-client/pkg/cache"
+	"github.com/Sternrassler/eve-esi-client/pkg/ratelimit"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
@@ -856,5 +857,108 @@ func TestDo_RespectsMaxConcurrency(t *testing.T) {
 	wg.Wait()
 	if got > 2 {
 		t.Errorf("max gleichzeitig in-flight = %d, want <= 2", got)
+	}
+}
+
+// 429-Gruppen-Rate-Limit (X-Ratelimit-*): der erste Versuch wird abgelehnt,
+// der Retry muss die Retry-After-Sperre im Gruppen-Gate abwarten und dann
+// erfolgreich sein. Zudem darf ein 429 das Legacy-Error-Budget NICHT belasten.
+func TestDo_429RetriesAfterRetryAfterAndSucceeds(t *testing.T) {
+	redisClient := setupTestRedis(t)
+	cfg := DefaultConfig(redisClient, "Test/1.0 (t@e.x)")
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	groupHeaders := func() http.Header {
+		h := make(http.Header)
+		h.Set("X-Ratelimit-Group", "market-order")
+		h.Set("X-Ratelimit-Limit", "12000/15m")
+		h.Set("X-Ratelimit-Used", "2")
+		return h
+	}
+
+	var attempt int
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(_ *http.Request) (*http.Response, error) {
+		attempt++
+		if attempt == 1 {
+			h := groupHeaders()
+			h.Set("X-Ratelimit-Remaining", "0")
+			h.Set("Retry-After", "1")
+			return &http.Response{StatusCode: 429, Status: "429", Header: h, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		h := groupHeaders()
+		h.Set("X-Ratelimit-Remaining", "11000")
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("[]"))}, nil
+	})})
+
+	// Legacy-Budget seeden, um zu prüfen, dass der 429 es nicht dekrementiert.
+	ctx := context.Background()
+	redisClient.Set(ctx, "esi:rate_limit:errors_remaining", 50, 0)
+	redisClient.Set(ctx, "esi:rate_limit:reset_timestamp", time.Now().Add(55*time.Second).Unix(), 0)
+	if lu, merr := json.Marshal(time.Now()); merr == nil {
+		redisClient.Set(ctx, "esi:rate_limit:last_update", lu, 0)
+	}
+
+	start := time.Now()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://esi.evetech.net/v1/markets/10000002/orders/", nil)
+	resp, err := c.Do(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	if attempt != 2 {
+		t.Errorf("attempts = %d, want 2 (429 then 200)", attempt)
+	}
+	// Retry-After 1s muss abgewartet worden sein (plus Retry-Backoff).
+	if elapsed < 1*time.Second {
+		t.Errorf("expected wait >= Retry-After (1s), took %v", elapsed)
+	}
+	// Legacy-Budget unangetastet (429 gehört zum neuen Schema).
+	if got, _ := redisClient.Get(ctx, "esi:rate_limit:errors_remaining").Int(); got != 50 {
+		t.Errorf("legacy errors_remaining = %d, want 50 (429 must not decrement)", got)
+	}
+}
+
+// Eine lange 429-Sperre (> maxBlockWait des Gruppen-Gates) darf nicht synchron
+// ausgesessen werden: Do bricht schnell mit GroupRateLimitedError ab.
+func TestDo_429LongBlockFailsFast(t *testing.T) {
+	redisClient := setupTestRedis(t)
+	cfg := DefaultConfig(redisClient, "Test/1.0 (t@e.x)")
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(_ *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("X-Ratelimit-Group", "market-order")
+		h.Set("X-Ratelimit-Limit", "12000/15m")
+		h.Set("X-Ratelimit-Remaining", "0")
+		h.Set("Retry-After", "900")
+		return &http.Response{StatusCode: 429, Status: "429", Header: h, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+
+	ctx := context.Background()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://esi.evetech.net/v1/markets/10000002/orders/", nil)
+	start := time.Now()
+	_, err = c.Do(req)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected error for long 429 block")
+	}
+	var rlErr *ratelimit.GroupRateLimitedError
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("expected GroupRateLimitedError in chain, got %v", err)
+	}
+	// Erster Versuch (429) + abgebrochener zweiter Versuch — aber kein 900s-Sitzen.
+	if elapsed > 30*time.Second {
+		t.Errorf("must fail fast, took %v", elapsed)
 	}
 }
