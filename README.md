@@ -100,8 +100,7 @@ This client strictly follows ESI rules to prevent bans:
 
 ✅ **Group Rate Limiting**: Tracks `X-Ratelimit-*` headers + honors `Retry-After` on 429  
 ✅ **Error Rate Limiting**: Tracks `X-ESI-Error-Limit-Remain` header (legacy routes)  
-✅ **Cache Respect**: Always honors `expires` header  
-✅ **Conditional Requests**: Uses `If-None-Match` (ETag)  
+✅ **Cache Respect**: Fresh entries (within `Expires`) are served from cache — no re-request, no token cost  
 ✅ **Spread Load**: Rate limiting prevents spiky traffic  
 ✅ **User-Agent**: Required with contact info  
 

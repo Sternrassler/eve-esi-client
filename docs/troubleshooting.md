@@ -107,7 +107,7 @@ for _, endpoint := range endpoints {
 **Solution**:
 
 1. Check the group state: `redis-cli get "esi:ratelimit:group:<group>"` (`blocked_until`, `remaining`).
-2. Reduce request volume for that group or spread it over the 15m window; rely on conditional requests (3xx costs 1 token instead of 2).
+2. Reduce request volume for that group or spread it over the 15m window; fresh cache hits cost no tokens at all — recompute within the `Expires` window where possible.
 3. Long blocks: back off until `Retry-After` has passed — retrying earlier only wastes attempts.
 
 ### Constant rate limit warnings
@@ -199,22 +199,13 @@ for _, endpoint := range endpoints {
    {"endpoint":"/v1/status/","ttl":299.5,"message":"Cached response"}
    ```
 
-### 304 Not Modified but still downloading data
+### Unexpected 304 errors
 
-**Symptom**: Seeing 304 responses but bandwidth usage is high.
+**Symptom**: Requests fail with `unexpected 304 from ESI without conditional request`.
 
-**Cause**: This is normal - 304 means server validated, but client must have cached data.
+**Cause**: The client serves fresh cache entries directly and sends no conditional requests — a 304 from ESI is therefore a protocol violation (or a misbehaving proxy) and is surfaced fail-loud instead of returning empty data.
 
-**How it works**:
-```
-1. Client has cached data with ETag "abc123"
-2. Client sends request with If-None-Match: "abc123"
-3. Server checks, data unchanged
-4. Server returns 304 Not Modified (small response, ~200 bytes)
-5. Client returns cached data to user (from Redis)
-```
-
-**Bandwidth saved**: Instead of 100KB response, client receives 200 byte response.
+**Solution**: Check for intermediaries that inject `If-None-Match`/`If-Modified-Since` headers into outgoing requests.
 
 ### Cache not expiring
 

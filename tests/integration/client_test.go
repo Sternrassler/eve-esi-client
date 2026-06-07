@@ -124,20 +124,21 @@ func TestFullRequestFlow(t *testing.T) {
 	// Wait for cache write
 	time.Sleep(100 * time.Millisecond)
 
-	// Request 2: Should hit cache and make conditional request
-	t.Log("Request 2: Cache hit with conditional request")
+	// Request 2: Eintrag ist frisch → Fresh-Serve aus dem Cache, kein
+	// weiterer ESI-Request und kein Conditional Request.
+	t.Log("Request 2: Fresh cache hit - served without revalidation")
 	resp2, err := c.Get(ctx, "/v1/markets/10000002/orders/")
 	if err != nil {
 		t.Fatalf("Request 2 failed: %v", err)
 	}
 	defer func() { _ = resp2.Body.Close() }()
 
-	if mockESI.GetRequestCount() != 2 {
-		t.Errorf("After request 2: ESI requests = %d, want 2", mockESI.GetRequestCount())
+	if mockESI.GetRequestCount() != 1 {
+		t.Errorf("After request 2: ESI requests = %d, want 1 (fresh hit must not revalidate)", mockESI.GetRequestCount())
 	}
 
-	if mockESI.GetConditionalCount() != 1 {
-		t.Errorf("Conditional requests = %d, want 1", mockESI.GetConditionalCount())
+	if mockESI.GetConditionalCount() != 0 {
+		t.Errorf("Conditional requests = %d, want 0 (fresh hit must not revalidate)", mockESI.GetConditionalCount())
 	}
 
 	// Verify metrics incremented
@@ -183,17 +184,17 @@ func TestCacheHit(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Second request - should use cache
+	// Second request - der Eintrag ist noch frisch (Expires in der Zukunft)
+	// und MUSS ohne Netzwerk-Roundtrip aus dem Cache kommen (Fresh-Serve).
 	resp2, err := c.Get(ctx, "/v1/status/")
 	if err != nil {
 		t.Fatalf("Second request failed: %v", err)
 	}
 	_ = resp2.Body.Close()
 
-	// Should have made a conditional request (304 response expected)
 	finalCount := mockESI.GetRequestCount()
-	if finalCount != 2 {
-		t.Errorf("Final ESI requests = %d, want 2 (with conditional)", finalCount)
+	if finalCount != 1 {
+		t.Errorf("Final ESI requests = %d, want 1 (fresh hit must not revalidate)", finalCount)
 	}
 }
 
@@ -239,7 +240,8 @@ func TestNotModified(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	// Second request - should get 304 and return cached data
+	// Second request - der Eintrag ist noch frisch und wird direkt aus dem
+	// Cache serviert (Fresh-Serve): gleicher Body, KEIN Conditional Request.
 	resp2, err := c.Get(ctx, "/v1/markets/10000002/orders/")
 	if err != nil {
 		t.Fatalf("Second request failed: %v", err)
@@ -247,13 +249,12 @@ func TestNotModified(t *testing.T) {
 	body2, _ := io.ReadAll(resp2.Body)
 	_ = resp2.Body.Close()
 
-	// Even though server returned 304, client should return cached body
 	if string(body2) != testData {
 		t.Errorf("Second response body = %s, want %s (cached)", string(body2), testData)
 	}
 
-	if mockESI.GetConditionalCount() != 1 {
-		t.Errorf("Conditional requests = %d, want 1", mockESI.GetConditionalCount())
+	if mockESI.GetConditionalCount() != 0 {
+		t.Errorf("Conditional requests = %d, want 0 (fresh hit must not revalidate)", mockESI.GetConditionalCount())
 	}
 }
 

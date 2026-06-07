@@ -151,6 +151,47 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	endpoint := req.URL.Path
 
+	// Caching gilt ausschließlich für GET: nur dort sind Antworten per
+	// Expires/ETag cachebar; POST/PUT/DELETE dürfen weder aus dem Cache
+	// bedient werden noch ihn befüllen.
+	cacheable := req.Method == http.MethodGet || req.Method == ""
+
+	// Step 1: Check Cache — VOR allen Gates: ein frischer Treffer kostet
+	// keinen ESI-Request und soll weder Limiter/Semaphore belegen noch
+	// Rate-Limit-Drosseln durchlaufen.
+	cacheKey := cache.CacheKey{
+		Endpoint:    endpoint,
+		QueryParams: req.URL.Query(),
+	}
+	// Authentifizierte Requests: Hash des Authorization-Headers in den Key (kein Roh-Token).
+	if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+		sum := sha256.Sum256([]byte(authHeader))
+		cacheKey.Auth = hex.EncodeToString(sum[:])[:16]
+	}
+
+	var cachedEntry *cache.CacheEntry
+	if cacheable {
+		entry, cerr := c.cache.Get(ctx, cacheKey)
+		if cerr != nil && cerr != cache.ErrCacheMiss {
+			c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Cache get error")
+		}
+		cachedEntry = entry
+	}
+
+	// Fresh-Serve: cache.Get liefert ausschließlich un-abgelaufene Einträge
+	// (Expires in der Zukunft = CCPs Freshness-Vertrag) — sie werden OHNE
+	// Netzwerk-Roundtrip serviert. Das ist das Verhalten, das RespectExpires
+	// verspricht; vorher revalidierte der Client jeden frischen Treffer per
+	// Conditional Request (304-Roundtrip: Latenz + 1 Token Gruppen-Rate-Limit
+	// + Gate-Pass pro Lookup).
+	if cachedEntry != nil {
+		c.logger.Debug().
+			Str("endpoint", endpoint).
+			Dur("ttl", cachedEntry.TTL()).
+			Msg("Fresh cache hit - serving without revalidation")
+		return c.cacheEntryToResponse(cachedEntry), nil
+	}
+
 	// Gate 0a: req/s-Limiter (in-memory Token-Bucket)
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter wait: %w", err)
@@ -164,7 +205,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return nil, ctx.Err()
 	}
 
-	// Step 1: Check Rate Limit
+	// Step 2: Check Rate Limit (Legacy-Error-Limit)
 	allowed, err := c.rateLimiter.ShouldAllowRequest(ctx)
 	if err != nil {
 		c.logger.Error().Err(err).Msg("Rate limit check failed")
@@ -177,30 +218,12 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("request blocked: rate limit critical")
 	}
 
-	// Step 2: Check Cache
-	cacheKey := cache.CacheKey{
-		Endpoint:    endpoint,
-		QueryParams: req.URL.Query(),
-	}
-	// Authentifizierte Requests: Hash des Authorization-Headers in den Key (kein Roh-Token).
-	if authHeader := req.Header.Get("Authorization"); authHeader != "" {
-		sum := sha256.Sum256([]byte(authHeader))
-		cacheKey.Auth = hex.EncodeToString(sum[:])[:16]
-	}
-
-	cachedEntry, err := c.cache.Get(ctx, cacheKey)
-	if err != nil && err != cache.ErrCacheMiss {
-		c.logger.Warn().Err(err).Str("endpoint", endpoint).Msg("Cache get error")
-	}
-
-	// Step 3: Make Conditional Request if cache hit
-	if cachedEntry != nil && cache.ShouldMakeConditionalRequest(cachedEntry) {
-		cache.AddConditionalHeaders(req, cachedEntry)
-		c.logger.Debug().
-			Str("endpoint", endpoint).
-			Str("etag", cachedEntry.ETag).
-			Msg("Making conditional request")
-	}
+	// Hinweis: Der frühere Step "Conditional Request bei Cache-Hit" entfällt —
+	// frische Einträge werden oben direkt serviert, abgelaufene löscht
+	// cache.Get (Redis-TTL räumt sie ohnehin ab). Eine Stale-with-ETag-
+	// Revalidierung (Einträge über Expires hinaus aufbewahren → 304 statt
+	// Voll-Fetch) wäre eine künftige Erweiterung der Cache-Schicht
+	// (cache.ShouldMakeConditionalRequest/AddConditionalHeaders existieren dort weiter).
 
 	// Step 4: Set User-Agent header
 	req.Header.Set("User-Agent", c.config.UserAgent)
@@ -348,28 +371,20 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return nil, retryErr
 	}
 
-	// Step 7: Handle 304 Not Modified
+	// Step 7: Handle 304 Not Modified.
+	// Da der Client keine Conditional Requests mehr sendet (frische Einträge
+	// werden oben direkt serviert, abgelaufene löscht cache.Get), ist ein 304
+	// hier eine Protokollverletzung von ESI — fail-loud statt eines
+	// (nil, nil)-Returns aus einem nil-Cache-Eintrag.
 	if resp.StatusCode == http.StatusNotModified {
-		c.logger.Debug().Str("endpoint", endpoint).Msg("304 Not Modified - using cache")
-
-		// Update cache TTL from new expires header
-		if expiresStr := resp.Header.Get("Expires"); expiresStr != "" {
-			if newExpires, err := http.ParseTime(expiresStr); err == nil {
-				if err := c.cache.UpdateTTL(ctx, cacheKey, newExpires); err != nil {
-					c.logger.Warn().Err(err).Msg("Failed to update cache TTL")
-				}
-			}
-		}
-
-		// Return cached response
 		if cerr := resp.Body.Close(); cerr != nil {
 			c.logger.Warn().Err(cerr).Str("endpoint", endpoint).Msg("Failed to close 304 response body")
 		}
-		return c.cacheEntryToResponse(cachedEntry), nil
+		return nil, fmt.Errorf("unexpected 304 from ESI without conditional request for %s", endpoint)
 	}
 
-	// Step 8: Update Cache on success
-	if resp.StatusCode == http.StatusOK {
+	// Step 8: Update Cache on success (nur GET-Antworten sind cachebar)
+	if cacheable && resp.StatusCode == http.StatusOK {
 		entry, err := cache.ResponseToEntry(resp)
 		if err != nil {
 			// Response is still returned to the caller; it is just not cached.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Fresh-Serve: frische Cache-Einträge werden ohne Netzwerk-Roundtrip serviert.** `RespectExpires` versprach dieses Verhalten („MUST be true for ESI compliance"), wurde aber nur validiert — tatsächlich revalidierte der Client **jeden** frischen Treffer per Conditional Request (304-Roundtrip: Latenz, 1 Token im Gruppen-Rate-Limit, Gate-Pass pro Lookup; warme Berechnungen machten dadurch hunderte unnötige Requests). Jetzt: GET-Cache-Lookup **vor** allen Gates; ein frischer Eintrag (Expires in der Zukunft = CCPs Freshness-Vertrag) wird direkt aus Redis beantwortet — inklusive aller Header (`X-Pages` für Pagination bleibt erhalten). Abgelaufene Einträge werden wie bisher voll neu geladen (kein Verhaltensverlust: Redis-TTL räumte sie ohnehin ab, ein 304-Pfad für abgelaufene Einträge existierte faktisch nie).
+- **Caching strikt GET-only.** Vorher floss jeder 200 in den Cache und jeder Treffer in die Conditional-Header (cross-method harmlos, aber falsch) — mit Fresh-Serve wäre das fatal (POST aus dem Cache „beantwortet"). Cache-Lookup **und** Cache-Write sind jetzt auf GET begrenzt.
+- **Conditional Requests entfernt; unerwartete 304 sind fail-loud.** Da der Client keine `If-None-Match`-Header mehr sendet, ist ein 304 von ESI eine Protokollverletzung und liefert einen klaren Fehler statt eines leeren Responses. ETags werden weiter mitgespeichert — Grundlage für eine mögliche künftige Stale-with-ETag-Revalidierung (Eintrag über Expires hinaus aufbewahren → 304 statt Voll-Fetch).
+
 ## [0.6.0] - 2026-06-07
 
 ### Added

@@ -962,3 +962,59 @@ func TestDo_429LongBlockFailsFast(t *testing.T) {
 		t.Errorf("must fail fast, took %v", elapsed)
 	}
 }
+
+// Fresh-Serve: ein noch frischer Cache-Eintrag (Expires in der Zukunft) wird
+// OHNE Netzwerk-Roundtrip serviert — das ist das Verhalten, das RespectExpires
+// verspricht. Vorher revalidierte der Client jeden frischen Treffer per
+// Conditional Request (304-Roundtrip: Latenz + 1 Token Gruppen-Rate-Limit).
+func TestDo_FreshCacheHitServesWithoutHTTP(t *testing.T) {
+	redisClient := setupTestRedis(t)
+	cfg := DefaultConfig(redisClient, "Test/1.0 (t@e.x)")
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var httpCalls int
+	c.SetHTTPClient(&http.Client{Transport: rtFunc(func(_ *http.Request) (*http.Response, error) {
+		httpCalls++
+		h := make(http.Header)
+		h.Set("Expires", time.Now().Add(5*time.Minute).Format(http.TimeFormat))
+		h.Set("ETag", `"etag-1"`)
+		h.Set("X-Pages", "7")
+		h.Set("Content-Type", "application/json")
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`[{"id":1}]`))}, nil
+	})})
+
+	ctx := context.Background()
+
+	// Request 1: füllt den Cache (1 HTTP-Call).
+	resp1, err := c.Get(ctx, "/v1/markets/10000002/orders/")
+	if err != nil {
+		t.Fatalf("Request 1: %v", err)
+	}
+	body1, _ := io.ReadAll(resp1.Body)
+	_ = resp1.Body.Close()
+
+	// Request 2: Eintrag ist frisch — MUSS aus dem Cache kommen, 0 weitere HTTP-Calls.
+	resp2, err := c.Get(ctx, "/v1/markets/10000002/orders/")
+	if err != nil {
+		t.Fatalf("Request 2: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	_ = resp2.Body.Close()
+
+	if httpCalls != 1 {
+		t.Errorf("httpCalls = %d, want 1 (fresh hit must not revalidate)", httpCalls)
+	}
+	if string(body2) != string(body1) {
+		t.Errorf("cached body = %q, want %q", body2, body1)
+	}
+	if resp2.StatusCode != 200 {
+		t.Errorf("cached status = %d, want 200", resp2.StatusCode)
+	}
+	// Pagination-kritisch: Header (X-Pages) müssen den Fresh-Serve überleben.
+	if got := resp2.Header.Get("X-Pages"); got != "7" {
+		t.Errorf("X-Pages = %q, want \"7\" (headers must survive cache serve)", got)
+	}
+}
