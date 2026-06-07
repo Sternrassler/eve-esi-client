@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stale Rate-Limit-State drosselte dauerhaft (Prod-Incident 2026-06-07).** ESI liefert die `X-ESI-Error-Limit-*`-Header seit der `X-Ratelimit-*`-Migration nicht mehr — der in Redis gespeicherte `errors_remaining`-Wert konnte dadurch nie wieder steigen, wurde aber von jedem header-losen Fehler (`RecordError`) dekrementiert und lag mit **TTL -1** dauerhaft vor. Folge: ein einmal niedriger Wert (< 20) drosselte JEDEN Request (inkl. Cache-Hits) mit 1 s Sleep, tagelang und über Deploys hinweg; unter 5 hätte er alle Requests geblockt. Drei Schichten Fix: (1) `GetState` behandelt einen State mit **abgelaufenem Reset-Fenster als healthy** (`RateLimitState.IsExpired()` — EVE resettet das Budget alle 60 s); (2) `UpdateFromHeaders` schreibt alle drei State-Keys mit **TTL** (Fenster + 60 s Puffer); (3) das `RecordError`-Lua-Skript versieht TTL-lose Legacy-Keys mit einer 120-s-Ablaufzeit. Vergifteter Bestand heilt sich damit selbst.
+
 ## [0.5.0] - 2026-05-31
 
 ### Removed

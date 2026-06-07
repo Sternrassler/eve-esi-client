@@ -341,3 +341,130 @@ func parseIntOrZero(val string) int {
 	}
 	return result
 }
+
+// --- Stale-State-Regression (2026-06-07) ---------------------------------
+// ESI liefert die X-ESI-Error-Limit-Header seit der X-Ratelimit-Migration
+// nicht mehr; ein einmal niedriger errors_remaining-Wert wurde nie wieder
+// angehoben (nur RecordError-Decrements) und drosselte mit TTL -1 dauerhaft
+// JEDEN Request — Tage über das 60s-EVE-Fenster hinaus (Prod-Incident:
+// Hauling 73s statt <10s). Abgelaufenes Fenster ⇒ State ist stale ⇒ healthy.
+
+func seedCompleteState(t *testing.T, rc *redis.Client, remaining int, resetAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	rc.Set(ctx, RedisKeyErrorsRemaining, remaining, 0)
+	rc.Set(ctx, RedisKeyResetTimestamp, resetAt.Unix(), 0)
+	lu, err := json.Marshal(time.Now())
+	if err != nil {
+		t.Fatalf("marshal last update: %v", err)
+	}
+	rc.Set(ctx, RedisKeyLastUpdate, lu, 0)
+}
+
+func TestGetState_ExpiredWindowReturnsHealthy(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	// Kritisch niedriger Wert, aber das EVE-Fenster ist seit 5 Minuten vorbei.
+	seedCompleteState(t, rc, 5, time.Now().Add(-5*time.Minute))
+
+	st, err := tr.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if st.ErrorsRemaining != 100 || !st.IsHealthy {
+		t.Errorf("expired window must yield healthy default, got remaining=%d healthy=%v",
+			st.ErrorsRemaining, st.IsHealthy)
+	}
+}
+
+func TestGetState_ActiveWindowKeepsState(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	// Fenster noch aktiv → Wert muss unverändert wirken.
+	seedCompleteState(t, rc, 5, time.Now().Add(30*time.Second))
+
+	st, err := tr.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if st.ErrorsRemaining != 5 || st.IsHealthy {
+		t.Errorf("active window must keep stored state, got remaining=%d healthy=%v",
+			st.ErrorsRemaining, st.IsHealthy)
+	}
+}
+
+func TestShouldAllowRequest_NoThrottleWhenWindowExpired(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	seedCompleteState(t, rc, 5, time.Now().Add(-5*time.Minute))
+
+	start := time.Now()
+	allowed, err := tr.ShouldAllowRequest(ctx)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("ShouldAllowRequest: %v", err)
+	}
+	if !allowed {
+		t.Error("expired state must not block requests")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("expired state must not throttle (slept %v)", elapsed)
+	}
+}
+
+func TestUpdateFromHeaders_SetsTTLOnAllKeys(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	headers := http.Header{}
+	headers.Set("X-ESI-Error-Limit-Remain", "42")
+	headers.Set("X-ESI-Error-Limit-Reset", "30")
+
+	applied, err := tr.UpdateFromHeaders(ctx, headers)
+	if err != nil || !applied {
+		t.Fatalf("UpdateFromHeaders: applied=%v err=%v", applied, err)
+	}
+
+	for _, key := range []string{RedisKeyErrorsRemaining, RedisKeyResetTimestamp, RedisKeyLastUpdate} {
+		ttl := rc.TTL(ctx, key).Val()
+		if ttl <= 0 {
+			t.Errorf("key %s must have a TTL (stale-state self-destruct), got %v", key, ttl)
+		}
+	}
+}
+
+func TestRecordError_EnsuresTTLOnLegacyKeys(t *testing.T) {
+	rc := setupTestRedis(t)
+	defer func() { _ = rc.Close() }()
+	ctx := context.Background()
+	tr := NewTracker(rc, zerolog.Nop())
+
+	// Legacy-Zustand: Keys ohne TTL (so wie der vergiftete Prod-State).
+	seedCompleteState(t, rc, 10, time.Now().Add(30*time.Second))
+
+	if err := tr.RecordError(ctx); err != nil {
+		t.Fatalf("RecordError: %v", err)
+	}
+
+	got, _ := rc.Get(ctx, RedisKeyErrorsRemaining).Int()
+	if got != 9 {
+		t.Errorf("errors_remaining = %d, want 9", got)
+	}
+	for _, key := range []string{RedisKeyErrorsRemaining, RedisKeyResetTimestamp, RedisKeyLastUpdate} {
+		ttl := rc.TTL(ctx, key).Val()
+		if ttl <= 0 {
+			t.Errorf("key %s must get a TTL after RecordError, got %v", key, ttl)
+		}
+	}
+}
