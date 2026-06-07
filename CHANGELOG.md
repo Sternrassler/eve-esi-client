@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-07
+
 ### Changed
 
 - **Fresh-Serve: frische Cache-Einträge werden ohne Netzwerk-Roundtrip serviert.** `RespectExpires` versprach dieses Verhalten („MUST be true for ESI compliance"), wurde aber nur validiert — tatsächlich revalidierte der Client **jeden** frischen Treffer per Conditional Request (304-Roundtrip: Latenz, 1 Token im Gruppen-Rate-Limit, Gate-Pass pro Lookup; warme Berechnungen machten dadurch hunderte unnötige Requests). Jetzt: GET-Cache-Lookup **vor** allen Gates; ein frischer Eintrag (Expires in der Zukunft = CCPs Freshness-Vertrag) wird direkt aus Redis beantwortet — inklusive aller Header (`X-Pages` für Pagination bleibt erhalten). Abgelaufene Einträge werden wie bisher voll neu geladen (kein Verhaltensverlust: Redis-TTL räumte sie ohnehin ab, ein 304-Pfad für abgelaufene Einträge existierte faktisch nie).
