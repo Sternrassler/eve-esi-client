@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-08
+
 ### Added
 
 - **`make release` + `make release-check` Target.** `release` transformiert den `[Unreleased]`-Block zu `[VERSION] - <Datum>` (SemVer-Format validiert, Doppel-Release verhindert) und gibt die commit/tag/push-Schritte aus — beendet die manuelle `sed`-Zeremonie. `release-check` (auch als Prereq) bricht ab, wenn `[Unreleased]` leer ist (kein Leer-Release). Angleichung an das eve-o-provit-Release-Tooling.
