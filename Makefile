@@ -1,4 +1,4 @@
-.PHONY: help test test-coverage lint fmt vet clean deps tidy
+.PHONY: help test test-coverage lint fmt vet clean deps tidy release-check release
 
 GO := go
 GOFLAGS := -v
@@ -40,5 +40,25 @@ deps: ## Download dependencies
 tidy: ## Tidy go.mod
 	@echo "Tidying go.mod..."
 	$(GO) mod tidy
+
+release-check: ## Prüft, ob der [Unreleased]-Block Einträge für ein Release hat
+	@awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{if(f)exit} f&&/[^[:space:]]/{found=1} END{exit !found}' CHANGELOG.md \
+		|| { echo "[make release-check] ERROR: [Unreleased] ist leer — nichts zu releasen" >&2; exit 1; }
+	@echo "[make release-check] ✅ [Unreleased] enthält Einträge"
+
+release: release-check ## Version bump: [Unreleased] -> [VERSION] (Beispiel: make release VERSION=0.7.1)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "[make release] ERROR: VERSION Parameter fehlt (Beispiel: make release VERSION=0.7.1)" >&2; \
+		exit 1; \
+	fi
+	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$' \
+		|| { echo "[make release] ERROR: VERSION '$(VERSION)' ist kein SemVer (X.Y.Z)" >&2; exit 1; }
+	@grep -qE '^## \[$(VERSION)\]' CHANGELOG.md \
+		&& { echo "[make release] ERROR: Version $(VERSION) steht bereits im CHANGELOG" >&2; exit 1; } || true
+	@echo "[make release] Bump auf $(VERSION)..."
+	@sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$(VERSION)] - $$(date +%Y-%m-%d)/" CHANGELOG.md
+	@echo "[make release] ✅ CHANGELOG aktualisiert — nächste Schritte:"
+	@echo "    git add CHANGELOG.md && git commit -m 'chore(release): v$(VERSION)'"
+	@echo "    git tag v$(VERSION) && git push origin main v$(VERSION)"
 
 .DEFAULT_GOAL := help
